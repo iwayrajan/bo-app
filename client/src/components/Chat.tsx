@@ -44,7 +44,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
             
             // Add new message and sort by timestamp
             const newMessages = [...prev, message].sort((a, b) => 
-              a.timestamp.getTime() - b.timestamp.getTime()
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
             );
             return newMessages;
           });
@@ -65,7 +65,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
 
   // Handle real-time messages
   useEffect(() => {
-    if (!socket || !isConnected) {
+    if (!socket) {
       console.log('Socket not connected, skipping message handler setup');
       return;
     }
@@ -75,24 +75,14 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
 
     const handleMessage = (message: Message) => {
       console.log('Received message:', message);
-      if (message.id && !processedMessageIds.current.has(message.id)) {
-        setMessages(prev => {
-          // Check if message already exists
-          const exists = prev.some(m => m.id === message.id);
-          if (exists) {
-            console.log('Message already exists, skipping:', message);
-            return prev;
-          }
-          
-          // Add new message and sort by timestamp
-          const newMessages = [...prev, message].sort((a, b) => 
-            a.timestamp.getTime() - b.timestamp.getTime()
-          );
-          return newMessages;
+      setMessages(prevMessages => {
+        const newMessages = [...prevMessages, message];
+        return newMessages.sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeA - timeB;
         });
-        
-        processedMessageIds.current.add(message.id);
-      }
+      });
     };
 
     const handleUserJoined = (data: { username: string; message: string }) => {
@@ -125,7 +115,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
       socket.off('user-joined', handleUserJoined);
       socket.off('user-left', handleUserLeft);
     };
-  }, [socket, isConnected, username]);
+  }, [socket, username]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -181,9 +171,9 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message, index) => (
+        {messages.map((message) => (
           <div
-            key={message.id || index}
+            key={message.id}
             className={`flex ${
               message.user === username ? 'justify-end' : 'justify-start'
             }`}
@@ -192,14 +182,12 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
               className={`max-w-[70%] rounded-lg p-3 ${
                 message.user === username
                   ? 'bg-blue-500 text-white'
-                  : message.user === 'System'
-                  ? 'bg-gray-200 text-gray-800'
-                  : 'bg-white text-gray-800'
+                  : 'bg-gray-200 text-gray-800'
               }`}
             >
-              <div>{message.text}</div>
+              <div className="text-sm">{message.text}</div>
               <div className="text-xs mt-1 opacity-75">
-                {message.timestamp.toLocaleTimeString()}
+                {new Date(message.timestamp).toLocaleTimeString()}
               </div>
             </div>
           </div>

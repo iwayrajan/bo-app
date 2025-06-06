@@ -16,6 +16,23 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
+    // Request microphone access when component mounts
+    const requestMicrophoneAccess = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log('Microphone access granted');
+        // Stop the stream immediately since we don't need it yet
+        stream.getTracks().forEach(track => track.stop());
+      } catch (error) {
+        console.error('Error requesting microphone access:', error);
+        setError('Please allow microphone access to use audio calls');
+      }
+    };
+
+    requestMicrophoneAccess();
+  }, []); // Empty dependency array means this runs once when component mounts
+
+  useEffect(() => {
     if (!socket) {
       console.log('Socket not available, skipping call handler setup');
       return;
@@ -23,16 +40,33 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
     if (!socket.connected) {
       console.log('Socket not connected, waiting for connection...');
-      return;
+      const handleConnect = () => {
+        console.log('Socket connected, setting up call handlers');
+        setupCallHandlers();
+      };
+      socket.on('connect', handleConnect);
+      return () => {
+        socket.off('connect', handleConnect);
+      };
     }
+
+    setupCallHandlers();
+  }, [socket, username]);
+
+  const setupCallHandlers = () => {
+    if (!socket) return;
 
     console.log('Setting up call handlers for user:', username);
     console.log('Current socket ID:', socket.id);
     console.log('Current call state:', { isCallActive, remoteUser });
 
     const handleIncomingCall = async (data: { from: string; signal: any }) => {
-      console.log('Incoming call from:', data.from);
-      console.log('Signal data:', data.signal);
+      console.log('Incoming call received:', {
+        from: data.from,
+        signalType: data.signal?.type,
+        currentUser: username,
+        socketId: socket.id
+      });
       console.log('Current call state:', { isCallActive, remoteUser });
       
       if (isCallActive) {
@@ -44,81 +78,20 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         return;
       }
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('Got local media stream for incoming call');
-        localStreamRef.current = stream;
-        
-        const pc = new RTCPeerConnection({
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        });
-        peerConnectionRef.current = pc;
-
-        stream.getTracks().forEach(track => {
-          console.log('Adding local track to peer connection:', track.kind);
-          pc.addTrack(track, stream);
-        });
-
-        pc.ontrack = (event) => {
-          console.log('Received remote track:', event.track.kind);
-          const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
-          if (audioElement && event.streams[0]) {
-            audioElement.srcObject = event.streams[0];
-            audioElement.play().catch(error => {
-              console.error('Error playing audio:', error);
-              setError('Failed to play audio');
-            });
-          }
-        };
-
-        pc.onicecandidate = (event) => {
-          console.log('New ICE candidate:', event.candidate ? 'present' : 'null');
-          if (event.candidate) {
-            socket.emit('ice-candidate', {
-              from: username,
-              to: data.from,
-              candidate: event.candidate
-            });
-          }
-        };
-
-        pc.onconnectionstatechange = () => {
-          console.log('Connection state changed:', pc.connectionState);
-          if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-            console.log('Call connection failed or disconnected');
-            endCall();
-          }
-        };
-
-        await pc.setRemoteDescription(new RTCSessionDescription(data.signal));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        console.log('Sending call answer to:', data.from);
-        socket.emit('call-answer', {
-          from: username,
-          to: data.from,
-          signal: answer
-        });
-
-        setRemoteUser(data.from);
-        setIsCallActive(true);
-      } catch (error) {
-        console.error('Error handling incoming call:', error);
-        setError('Failed to handle incoming call');
-        socket.emit('call-failed', { 
-          to: data.from,
-          message: 'Failed to handle call' 
-        });
-      }
+      // Set the incoming call state
+      setIncomingCall({
+        from: data.from,
+        offer: data.signal
+      });
     };
 
     const handleCallAccepted = async (data: { from: string; signal: any }) => {
-      console.log('Call accepted from:', data.from);
-      console.log('Signal data:', data.signal);
+      console.log('Call accepted:', {
+        from: data.from,
+        signalType: data.signal?.type,
+        currentUser: username,
+        socketId: socket.id
+      });
       
       if (!peerConnectionRef.current) {
         console.error('No peer connection available');
@@ -139,13 +112,23 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     };
 
     const handleCallFailed = (data: { message: string }) => {
-      console.error('Call failed:', data.message);
+      console.error('Call failed:', {
+        message: data.message,
+        currentUser: username,
+        socketId: socket.id
+      });
       setError(data.message);
+      setIncomingCall(null); // Clear incoming call state
       endCall();
     };
 
-    const handleIceCandidate = async (data: { candidate: RTCIceCandidate }) => {
-      console.log('Received ICE candidate');
+    const handleIceCandidate = async (data: { from: string; candidate: RTCIceCandidate }) => {
+      console.log('Received ICE candidate:', {
+        from: data.from,
+        candidate: data.candidate ? 'present' : 'null',
+        currentUser: username,
+        socketId: socket.id
+      });
       if (!peerConnectionRef.current) {
         console.error('No peer connection available for ICE candidate');
         return;
@@ -160,10 +143,14 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     };
 
     const handleCallEnded = () => {
-      console.log('Call ended by remote user');
+      console.log('Call ended by remote user:', {
+        currentUser: username,
+        socketId: socket.id
+      });
       endCall();
     };
 
+    // Set up event listeners
     socket.on('incoming-call', handleIncomingCall);
     socket.on('call-accepted', handleCallAccepted);
     socket.on('call-failed', handleCallFailed);
@@ -171,14 +158,14 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     socket.on('call-ended', handleCallEnded);
 
     return () => {
-      console.log('Cleaning up call handlers');
+      console.log('Cleaning up call handlers for user:', username);
       socket.off('incoming-call', handleIncomingCall);
       socket.off('call-accepted', handleCallAccepted);
       socket.off('call-failed', handleCallFailed);
       socket.off('ice-candidate', handleIceCandidate);
       socket.off('call-ended', handleCallEnded);
     };
-  }, [socket, username, isCallActive, remoteUser]);
+  };
 
   const startCall = async (targetUser: string) => {
     console.log('Starting call to:', targetUser);
@@ -257,15 +244,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       setRemoteUser(targetUser);
       setIsCallActive(true);
-
-      // Set a timeout to check if the call was accepted
-      setTimeout(() => {
-        if (peerConnection.connectionState !== 'connected') {
-          console.log('Call not accepted within timeout');
-          setError('Call not accepted');
-          endCall();
-        }
-      }, 10000); // 10 second timeout
+      setIsMuted(false); // Reset mute state when starting a new call
     } catch (error) {
       console.error('Error starting call:', error);
       setError('Failed to start call');
@@ -316,7 +295,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       // Add local stream
       stream.getTracks().forEach(track => {
-        console.log('Adding local track to peer connection');
+        console.log('Adding local track to peer connection:', track.kind);
         peerConnection.addTrack(track, stream);
       });
 
@@ -325,6 +304,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         if (event.candidate) {
           console.log('Sending ICE candidate for incoming call');
           socket?.emit('ice-candidate', {
+            from: username,
             to: incomingCall.from,
             candidate: event.candidate
           });
@@ -351,7 +331,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       // Handle incoming tracks
       peerConnection.ontrack = (event) => {
-        console.log('Received remote track');
+        console.log('Received remote track:', event.track.kind);
         const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
         if (audioElement && event.streams[0]) {
           audioElement.srcObject = event.streams[0];
@@ -372,25 +352,35 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       console.log('Sending call answer to:', incomingCall.from);
       socket?.emit('call-answer', {
+        from: username,
         to: incomingCall.from,
-        answer
+        signal: answer
       });
 
       setRemoteUser(incomingCall.from);
       setIsCallActive(true);
+      setIsMuted(false); // Reset mute state when accepting a call
       setIncomingCall(null);
     } catch (error) {
       console.error('Error handling incoming call:', error);
       setError('Failed to handle incoming call');
-      socket?.emit('call-failed', { to: incomingCall.from, message: 'Failed to handle incoming call' });
+      socket?.emit('call-failed', { 
+        to: incomingCall.from, 
+        message: 'Failed to handle incoming call' 
+      });
       setIncomingCall(null);
     }
   };
 
   const rejectCall = () => {
     if (!incomingCall) return;
-    socket?.emit('call-failed', { to: incomingCall.from, message: 'Call rejected' });
+    console.log('Rejecting call from:', incomingCall.from);
+    socket?.emit('call-failed', { 
+      to: incomingCall.from, 
+      message: 'Call rejected by user' 
+    });
     setIncomingCall(null);
+    setError(null); // Clear any existing errors
   };
 
   return (

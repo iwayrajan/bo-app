@@ -30,8 +30,9 @@ const io = new Server(server, {
   allowEIO3: true // Allow Engine.IO version 3
 });
 
-// Store connected users
+// Store connected users and call timeouts
 const connectedUsers = new Map();
+const callTimeouts = new Map();
 
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
@@ -95,14 +96,52 @@ io.on('connection', (socket) => {
     console.log('Current connected users:', Object.fromEntries(connectedUsers));
     
     const targetSocketId = connectedUsers.get(data.to);
+    console.log('Target socket ID for', data.to, ':', targetSocketId);
+    
     if (targetSocketId) {
       console.log(`Sending call to ${data.to} (socket: ${targetSocketId})`);
       io.to(targetSocketId).emit('incoming-call', {
         from: data.from,
         signal: data.signal
       });
+
+      // Clear any existing timeouts for this call pair
+      const timeoutKey1 = `${data.from}-${data.to}`;
+      const timeoutKey2 = `${data.to}-${data.from}`;
+      const existingTimeout1 = callTimeouts.get(timeoutKey1);
+      const existingTimeout2 = callTimeouts.get(timeoutKey2);
+      
+      if (existingTimeout1) {
+        clearTimeout(existingTimeout1);
+        callTimeouts.delete(timeoutKey1);
+        console.log('Cleared existing timeout for:', timeoutKey1);
+      }
+      if (existingTimeout2) {
+        clearTimeout(existingTimeout2);
+        callTimeouts.delete(timeoutKey2);
+        console.log('Cleared existing timeout for:', timeoutKey2);
+      }
+
+      // Set a new timeout
+      const timeoutId = setTimeout(() => {
+        const currentSocketId = connectedUsers.get(data.to);
+        if (currentSocketId === targetSocketId) {
+          console.log(`Call timeout for ${data.to}`);
+          io.to(targetSocketId).emit('call-failed', {
+            message: 'Call timed out'
+          });
+          socket.emit('call-failed', {
+            message: 'Call timed out'
+          });
+        }
+      }, 30000);
+
+      // Store the new timeout
+      callTimeouts.set(timeoutKey1, timeoutId);
+      callTimeouts.set(timeoutKey2, timeoutId);
+      console.log('Stored new timeout for keys:', timeoutKey1, timeoutKey2);
     } else {
-      console.log(`User ${data.to} not found in connected users`);
+      console.log(`User ${data.to} not found in connected users. Available users:`, Object.fromEntries(connectedUsers));
       socket.emit('call-failed', {
         message: 'User is not connected'
       });
@@ -115,6 +154,23 @@ io.on('connection', (socket) => {
       to: data.to,
       signalType: data.signal.type
     });
+
+    // Clear the timeout since the call was accepted
+    const timeoutKey1 = `${data.from}-${data.to}`;
+    const timeoutKey2 = `${data.to}-${data.from}`;
+    const timeoutId1 = callTimeouts.get(timeoutKey1);
+    const timeoutId2 = callTimeouts.get(timeoutKey2);
+
+    if (timeoutId1) {
+      clearTimeout(timeoutId1);
+      callTimeouts.delete(timeoutKey1);
+      console.log('Cleared call timeout for:', timeoutKey1);
+    }
+    if (timeoutId2) {
+      clearTimeout(timeoutId2);
+      callTimeouts.delete(timeoutKey2);
+      console.log('Cleared call timeout for:', timeoutKey2);
+    }
 
     const targetUser = connectedUsers.get(data.to);
     if (targetUser) {
@@ -155,6 +211,41 @@ io.on('connection', (socket) => {
       io.to(targetSocketId).emit('call-ended', {
         from: socket.username
       });
+    }
+  });
+
+  socket.on('call-failed', (data) => {
+    console.log('Call failed:', {
+      from: data.from,
+      to: data.to,
+      message: data.message
+    });
+
+    // Clear the timeout since the call was rejected
+    const timeoutKey1 = `${data.from}-${data.to}`;
+    const timeoutKey2 = `${data.to}-${data.from}`;
+    const timeoutId1 = callTimeouts.get(timeoutKey1);
+    const timeoutId2 = callTimeouts.get(timeoutKey2);
+
+    if (timeoutId1) {
+      clearTimeout(timeoutId1);
+      callTimeouts.delete(timeoutKey1);
+      console.log('Cleared call timeout for:', timeoutKey1);
+    }
+    if (timeoutId2) {
+      clearTimeout(timeoutId2);
+      callTimeouts.delete(timeoutKey2);
+      console.log('Cleared call timeout for:', timeoutKey2);
+    }
+
+    const targetUser = connectedUsers.get(data.to);
+    if (targetUser) {
+      console.log('Sending call failed message to:', data.to);
+      io.to(targetUser).emit('call-failed', {
+        message: data.message
+      });
+    } else {
+      console.log('Target user not found for call failed message:', data.to);
     }
   });
 

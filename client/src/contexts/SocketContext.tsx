@@ -38,22 +38,31 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       return;
     }
 
-    const username = currentUser.email.split('@')[0];
+    const userEmail = currentUser.email;
+    const extractedUsername = userEmail.split('@')[0];
+    console.log('Extracted username from email:', extractedUsername);
+    setUsername(extractedUsername);
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!username) {
+      console.log('No username provided, skipping socket initialization');
+      return;
+    }
+
     console.log('Initializing socket connection for user:', username);
     
     // Create socket connection
     const newSocket = io(SOCKET_URL, {
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      transports: ['websocket', 'polling'],
-      withCredentials: true,
-      autoConnect: true,
-      forceNew: true
+      timeout: 20000,
+      auth: {
+        username
+      }
     });
-
-    // Set socket immediately so components can access it
-    setSocket(newSocket);
 
     // Connection event handlers
     newSocket.on('connect', () => {
@@ -61,50 +70,27 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       console.log('Socket ID:', newSocket.id);
       setIsConnected(true);
       
-      // Set username after connection is established
+      // Set username after connection
       console.log('Setting username:', username);
       newSocket.emit('set-username', username);
     });
 
-    newSocket.on('username-set', (data) => {
-      console.log('Username set confirmed:', data.username);
-      setUsername(data.username);
+    newSocket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+      setIsConnected(false);
     });
 
     newSocket.on('disconnect', (reason) => {
       console.log('Socket disconnected. Reason:', reason);
       setIsConnected(false);
-      setUsername(null);
     });
 
-    newSocket.on('connect_error', (error) => {
-      console.error('Socket connection error:', error.message);
-      setIsConnected(false);
-      setUsername(null);
+    newSocket.on('username-set', (data) => {
+      console.log('Username set confirmed:', data.username);
     });
 
-    newSocket.on('error', (error) => {
-      console.error('Socket error:', error);
-    });
-
-    newSocket.on('reconnect_attempt', (attemptNumber) => {
-      console.log('Attempting to reconnect...', attemptNumber);
-    });
-
-    newSocket.on('reconnect', (attemptNumber) => {
-      console.log('Reconnected after', attemptNumber, 'attempts');
-      setIsConnected(true);
-      // Re-set username after reconnection
-      newSocket.emit('set-username', username);
-    });
-
-    newSocket.on('reconnect_error', (error) => {
-      console.error('Reconnection error:', error);
-    });
-
-    newSocket.on('reconnect_failed', () => {
-      console.error('Failed to reconnect');
-    });
+    // Set socket instance
+    setSocket(newSocket);
 
     // Cleanup function
     return () => {
@@ -112,11 +98,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       if (newSocket) {
         newSocket.disconnect();
       }
-      setSocket(null);
-      setIsConnected(false);
-      setUsername(null);
     };
-  }, [currentUser]); // Re-run if currentUser changes
+  }, [username]);
 
   return (
     <SocketContext.Provider value={{ socket, isConnected, username }}>
