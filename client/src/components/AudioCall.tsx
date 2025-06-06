@@ -96,7 +96,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       if (!peerConnectionRef.current) {
         console.error('No peer connection available');
         setError('Call connection lost');
-        return;
+        endCall();
       }
 
       try {
@@ -186,9 +186,19 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             ]
           },
           {
-            urls: 'turn:numb.viagenie.ca',
-            credential: 'muazkh',
-            username: 'webrtc@live.com'
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
           }
         ],
         iceCandidatePoolSize: 10,
@@ -222,6 +232,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         if (peerConnection.connectionState === 'failed' || 
             peerConnection.connectionState === 'disconnected' || 
             peerConnection.connectionState === 'closed') {
+          console.error('Connection state error:', peerConnection.connectionState);
           setError(`Call connection ${peerConnection.connectionState}`);
           endCall();
         }
@@ -233,6 +244,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         if (peerConnection.iceConnectionState === 'failed' || 
             peerConnection.iceConnectionState === 'disconnected' || 
             peerConnection.iceConnectionState === 'closed') {
+          console.error('ICE connection state error:', peerConnection.iceConnectionState);
           setError(`ICE connection ${peerConnection.iceConnectionState}`);
           endCall();
         }
@@ -248,6 +260,25 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.log('Signaling state:', peerConnection.signalingState);
       };
 
+      // Handle negotiation needed
+      peerConnection.onnegotiationneeded = async () => {
+        console.log('Negotiation needed');
+        try {
+          const offer = await peerConnection.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false
+          });
+          await peerConnection.setLocalDescription(offer);
+          socket?.emit('call-user', {
+            from: username,
+            to: targetUser,
+            signal: offer
+          });
+        } catch (error) {
+          console.error('Error during negotiation:', error);
+        }
+      };
+
       // Handle incoming tracks
       peerConnection.ontrack = (event) => {
         console.log('Received remote track:', event.track.kind);
@@ -261,8 +292,11 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         }
       };
 
-      // Create and send offer
-      const offer = await peerConnection.createOffer();
+      // Create and send offer with specific constraints
+      const offer = await peerConnection.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false
+      });
       await peerConnection.setLocalDescription(offer);
 
       console.log('Sending call offer to:', targetUser);
@@ -327,15 +361,26 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             ]
           },
           {
-            urls: 'turn:numb.viagenie.ca',
-            credential: 'muazkh',
-            username: 'webrtc@live.com'
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
           }
         ],
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all'
+        iceTransportPolicy: 'all',
+        sdpSemantics: 'unified-plan'
       });
       peerConnectionRef.current = peerConnection;
 
