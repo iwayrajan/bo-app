@@ -18,7 +18,6 @@ services:
   - type: web
     name: chatapp-client
     env: static
-    plan: free
     buildCommand: cd client && npm install && npm run build
     staticPublishPath: ./client/dist
     envVars:
