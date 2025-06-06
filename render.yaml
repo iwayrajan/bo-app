@@ -3,6 +3,7 @@ services:
   - type: web
     name: chatapp-server
     env: node
+    plan: free
     buildCommand: cd server && npm install
     startCommand: cd server && node server.js
     envVars:
@@ -14,11 +15,11 @@ services:
         value: 3000
 
   # Frontend service
-  - type: web
+  - type: static
     name: chatapp-client
-    env: node
+    env: static
     buildCommand: cd client && npm install && npm run build
-    startCommand: cd client && npm run preview
+    staticPublishPath: ./client/dist
     envVars:
       - key: VITE_SERVER_URL
         value: https://chatapp-server.onrender.com
