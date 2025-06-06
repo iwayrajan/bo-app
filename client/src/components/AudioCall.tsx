@@ -159,8 +159,12 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       }
 
       try {
-        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-        console.log('ICE candidate added successfully');
+        if (data.candidate) {
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+          console.log('ICE candidate added successfully');
+        } else {
+          console.log('Received null ICE candidate, skipping');
+        }
       } catch (error) {
         console.error('Error adding ICE candidate:', error);
       }
@@ -229,6 +233,16 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
             username: 'webrtc',
             credential: 'webrtc'
+          },
+          {
+            urls: 'turn:turn.voipstunt.com',
+            username: 'free',
+            credential: 'free'
+          },
+          {
+            urls: 'turn:turn.voipstunt.com:3478',
+            username: 'free',
+            credential: 'free'
           }
         ],
         iceCandidatePoolSize: 10,
@@ -431,6 +445,16 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
             username: 'webrtc',
             credential: 'webrtc'
+          },
+          {
+            urls: 'turn:turn.voipstunt.com',
+            username: 'free',
+            credential: 'free'
+          },
+          {
+            urls: 'turn:turn.voipstunt.com:3478',
+            username: 'free',
+            credential: 'free'
           }
         ],
         iceCandidatePoolSize: 10,
