@@ -176,9 +176,25 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       
       const peerConnection = new RTCPeerConnection({
         iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
+          {
+            urls: [
+              'stun:stun.l.google.com:19302',
+              'stun:stun1.l.google.com:19302',
+              'stun:stun2.l.google.com:19302',
+              'stun:stun3.l.google.com:19302',
+              'stun:stun4.l.google.com:19302'
+            ]
+          },
+          {
+            urls: 'turn:numb.viagenie.ca',
+            credential: 'muazkh',
+            username: 'webrtc@live.com'
+          }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceTransportPolicy: 'all'
       });
       peerConnectionRef.current = peerConnection;
 
@@ -191,7 +207,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log('Sending ICE candidate');
+          console.log('Sending ICE candidate:', event.candidate);
           socket?.emit('ice-candidate', {
             from: username,
             to: targetUser,
@@ -203,8 +219,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
         console.log('Connection state changed:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'failed') {
-          setError('Call connection failed');
+        if (peerConnection.connectionState === 'failed' || 
+            peerConnection.connectionState === 'disconnected' || 
+            peerConnection.connectionState === 'closed') {
+          setError(`Call connection ${peerConnection.connectionState}`);
           endCall();
         }
       };
@@ -212,10 +230,22 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Handle ICE connection state changes
       peerConnection.oniceconnectionstatechange = () => {
         console.log('ICE connection state:', peerConnection.iceConnectionState);
-        if (peerConnection.iceConnectionState === 'failed') {
-          setError('ICE connection failed');
+        if (peerConnection.iceConnectionState === 'failed' || 
+            peerConnection.iceConnectionState === 'disconnected' || 
+            peerConnection.iceConnectionState === 'closed') {
+          setError(`ICE connection ${peerConnection.iceConnectionState}`);
           endCall();
         }
+      };
+
+      // Handle ICE gathering state changes
+      peerConnection.onicegatheringstatechange = () => {
+        console.log('ICE gathering state:', peerConnection.iceGatheringState);
+      };
+
+      // Handle signaling state changes
+      peerConnection.onsignalingstatechange = () => {
+        console.log('Signaling state:', peerConnection.signalingState);
       };
 
       // Handle incoming tracks
@@ -287,9 +317,25 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       
       const peerConnection = new RTCPeerConnection({
         iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
+          {
+            urls: [
+              'stun:stun.l.google.com:19302',
+              'stun:stun1.l.google.com:19302',
+              'stun:stun2.l.google.com:19302',
+              'stun:stun3.l.google.com:19302',
+              'stun:stun4.l.google.com:19302'
+            ]
+          },
+          {
+            urls: 'turn:numb.viagenie.ca',
+            credential: 'muazkh',
+            username: 'webrtc@live.com'
+          }
+        ],
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceTransportPolicy: 'all'
       });
       peerConnectionRef.current = peerConnection;
 
@@ -314,8 +360,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Handle connection state changes
       peerConnection.onconnectionstatechange = () => {
         console.log('Connection state changed:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'failed') {
-          setError('Call connection failed');
+        if (peerConnection.connectionState === 'failed' || 
+            peerConnection.connectionState === 'disconnected' || 
+            peerConnection.connectionState === 'closed') {
+          setError(`Call connection ${peerConnection.connectionState}`);
           endCall();
         }
       };
@@ -323,10 +371,22 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Handle ICE connection state changes
       peerConnection.oniceconnectionstatechange = () => {
         console.log('ICE connection state:', peerConnection.iceConnectionState);
-        if (peerConnection.iceConnectionState === 'failed') {
-          setError('ICE connection failed');
+        if (peerConnection.iceConnectionState === 'failed' || 
+            peerConnection.iceConnectionState === 'disconnected' || 
+            peerConnection.iceConnectionState === 'closed') {
+          setError(`ICE connection ${peerConnection.iceConnectionState}`);
           endCall();
         }
+      };
+
+      // Handle ICE gathering state changes
+      peerConnection.onicegatheringstatechange = () => {
+        console.log('ICE gathering state:', peerConnection.iceGatheringState);
+      };
+
+      // Handle signaling state changes
+      peerConnection.onsignalingstatechange = () => {
+        console.log('Signaling state:', peerConnection.signalingState);
       };
 
       // Handle incoming tracks
