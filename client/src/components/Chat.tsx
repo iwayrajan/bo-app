@@ -66,33 +66,16 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
   // Handle real-time messages
   useEffect(() => {
     if (!socket || !isConnected) {
-      console.log('Socket not available or not connected, skipping message handler setup');
+      console.log('Socket not connected, skipping message handler setup');
       return;
     }
 
-    console.log('Setting up message handlers for socket:', socket.id);
-
-    const handleUserJoined = (data: { username: string }) => {
-      console.log('User joined event received:', data.username);
-      setMessages(prev => [...prev, {
-        user: 'System',
-        text: `${data.username} joined the chat`,
-        timestamp: new Date()
-      }]);
-    };
-
-    const handleUserLeft = (data: { username: string }) => {
-      console.log('User left event received:', data.username);
-      setMessages(prev => [...prev, {
-        user: 'System',
-        text: `${data.username} left the chat`,
-        timestamp: new Date()
-      }]);
-    };
+    console.log('Setting up message handlers for user:', username);
+    console.log('Current socket ID:', socket.id);
 
     const handleMessage = (message: Message) => {
-      console.log('Message received:', message);
-      if (!processedMessageIds.current.has(message.id!)) {
+      console.log('Received message:', message);
+      if (message.id && !processedMessageIds.current.has(message.id)) {
         setMessages(prev => {
           // Check if message already exists
           const exists = prev.some(m => m.id === message.id);
@@ -101,88 +84,72 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
             return prev;
           }
           
-          console.log('Adding new message:', message);
-          // Convert timestamp to Date object if it's a string
-          const messageWithDate = {
-            ...message,
-            timestamp: typeof message.timestamp === 'string' 
-              ? new Date(message.timestamp)
-              : message.timestamp
-          };
-          
           // Add new message and sort by timestamp
-          const newMessages = [...prev, messageWithDate].sort((a, b) => 
+          const newMessages = [...prev, message].sort((a, b) => 
             a.timestamp.getTime() - b.timestamp.getTime()
           );
           return newMessages;
         });
         
-        if (message.id) {
-          processedMessageIds.current.add(message.id);
-        }
+        processedMessageIds.current.add(message.id);
       }
     };
 
+    const handleUserJoined = (data: { username: string; message: string }) => {
+      console.log('User joined:', data);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        user: 'System',
+        text: data.message,
+        timestamp: new Date()
+      }]);
+    };
+
+    const handleUserLeft = (data: { username: string; message: string }) => {
+      console.log('User left:', data);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        user: 'System',
+        text: data.message,
+        timestamp: new Date()
+      }]);
+    };
+
+    socket.on('message', handleMessage);
     socket.on('user-joined', handleUserJoined);
     socket.on('user-left', handleUserLeft);
-    socket.on('message', handleMessage);
 
     return () => {
-      console.log('Cleaning up Socket.IO event listeners');
+      console.log('Cleaning up message handlers');
+      socket.off('message', handleMessage);
       socket.off('user-joined', handleUserJoined);
       socket.off('user-left', handleUserLeft);
-      socket.off('message', handleMessage);
     };
-  }, [socket, isConnected, processedMessageIds]);
+  }, [socket, isConnected, username]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = async (e: React.FormEvent) => {
+  const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!socket || !newMessage.trim()) {
-      console.log('Cannot send message: socket not available or message empty');
+    if (!socket || !isConnected || !username) {
+      console.log('Cannot send message: socket not connected or username not set');
+      setError('Cannot send message: not connected');
       return;
     }
 
-    if (!socket.connected) {
-      console.error('Socket not connected, cannot send message');
-      return;
-    }
+    if (!newMessage.trim()) return;
 
-    try {
-      console.log('Sending message:', newMessage);
-      // First save to Firebase to get the document ID
-      const docRef = await addDoc(collection(db, 'messages'), {
-        user: username,
-        text: newMessage,
-        timestamp: serverTimestamp()
-      });
+    const message = {
+      id: Date.now().toString(),
+      text: newMessage.trim()
+    };
 
-      // Then emit the message through Socket.IO with the document ID
-      const messageData = {
-        id: docRef.id,
-        user: username,
-        text: newMessage,
-        timestamp: new Date().toISOString() // Convert to ISO string for consistent format
-      };
-      console.log('Emitting message through Socket.IO:', messageData);
-      socket.emit('message', messageData);
-      setNewMessage('');
-    } catch (error) {
-      console.error('Error saving message to Firestore:', error);
-      // If Firebase fails, still send through Socket.IO without ID
-      const messageData = {
-        user: username,
-        text: newMessage,
-        timestamp: new Date().toISOString() // Convert to ISO string for consistent format
-      };
-      console.log('Emitting message through Socket.IO (without Firebase):', messageData);
-      socket.emit('message', messageData);
-      setNewMessage('');
-    }
+    console.log('Sending message:', message);
+    socket.emit('message', message);
+    setNewMessage('');
   };
 
   const clearChat = async () => {
