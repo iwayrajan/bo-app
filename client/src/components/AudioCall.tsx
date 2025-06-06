@@ -223,32 +223,12 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.voipstunt.com',
-            username: 'free',
-            credential: 'free'
-          },
-          {
-            urls: 'turn:turn.voipstunt.com:3478',
-            username: 'free',
-            credential: 'free'
           }
         ],
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all'
+        iceTransportPolicy: 'relay'
       });
       peerConnectionRef.current = peerConnection;
 
@@ -259,7 +239,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
           noiseSuppression: true,
           autoGainControl: true,
           channelCount: 1,
-          sampleRate: 48000
+          sampleRate: 48000,
+          latency: 0.01
         },
         video: false
       };
@@ -279,7 +260,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         return;
       }
 
-      // Handle ICE candidates
+      // Handle ICE candidates with better error handling
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
           console.log('Sending ICE candidate:', event.candidate);
@@ -288,36 +269,65 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             to: targetUser,
             candidate: event.candidate
           });
+        } else {
+          console.log('ICE candidate gathering completed');
         }
       };
 
-      // Handle connection state changes
+      // Handle connection state changes with retry logic
+      let connectionRetryCount = 0;
+      const maxRetries = 3;
+
       peerConnection.onconnectionstatechange = () => {
         console.log('Connection state changed:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'failed' || 
-            peerConnection.connectionState === 'disconnected' || 
-            peerConnection.connectionState === 'closed') {
-          console.error('Connection state error:', peerConnection.connectionState);
-          setError(`Call connection ${peerConnection.connectionState}`);
-          endCall();
+            peerConnection.connectionState === 'disconnected') {
+          if (connectionRetryCount < maxRetries) {
+            console.log(`Retrying connection (attempt ${connectionRetryCount + 1}/${maxRetries})`);
+            connectionRetryCount++;
+            // Try to restart ICE
+            peerConnection.restartIce();
+          } else {
+            console.error('Connection state error:', peerConnection.connectionState);
+            setError(`Call connection ${peerConnection.connectionState}`);
+            endCall();
+          }
+        } else if (peerConnection.connectionState === 'connected') {
+          console.log('Connection established successfully');
+          connectionRetryCount = 0;
         }
       };
 
-      // Handle ICE connection state changes
+      // Handle ICE connection state changes with retry logic
+      let iceRetryCount = 0;
+      const maxIceRetries = 3;
+
       peerConnection.oniceconnectionstatechange = () => {
         console.log('ICE connection state:', peerConnection.iceConnectionState);
         if (peerConnection.iceConnectionState === 'failed' || 
-            peerConnection.iceConnectionState === 'disconnected' || 
-            peerConnection.iceConnectionState === 'closed') {
-          console.error('ICE connection state error:', peerConnection.iceConnectionState);
-          setError(`ICE connection ${peerConnection.iceConnectionState}`);
-          endCall();
+            peerConnection.iceConnectionState === 'disconnected') {
+          if (iceRetryCount < maxIceRetries) {
+            console.log(`Retrying ICE connection (attempt ${iceRetryCount + 1}/${maxIceRetries})`);
+            iceRetryCount++;
+            // Try to restart ICE
+            peerConnection.restartIce();
+          } else {
+            console.error('ICE connection state error:', peerConnection.iceConnectionState);
+            setError(`ICE connection ${peerConnection.iceConnectionState}`);
+            endCall();
+          }
+        } else if (peerConnection.iceConnectionState === 'connected') {
+          console.log('ICE connection established successfully');
+          iceRetryCount = 0;
         }
       };
 
       // Handle ICE gathering state changes
       peerConnection.onicegatheringstatechange = () => {
         console.log('ICE gathering state:', peerConnection.iceGatheringState);
+        if (peerConnection.iceGatheringState === 'complete') {
+          console.log('ICE gathering completed');
+        }
       };
 
       // Handle signaling state changes
@@ -325,7 +335,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.log('Signaling state:', peerConnection.signalingState);
       };
 
-      // Handle incoming tracks
+      // Handle incoming tracks with better error handling
       peerConnection.ontrack = (event) => {
         console.log('Received remote track:', event.track.kind);
         const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
@@ -333,7 +343,14 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
           console.log('Setting remote audio stream:', event.streams[0]);
           audioElement.srcObject = event.streams[0];
           audioElement.autoplay = true;
-          audioElement.muted = false; // Ensure audio is not muted
+          audioElement.muted = false;
+          
+          // Add error handling for audio playback
+          audioElement.onerror = (error) => {
+            console.error('Audio element error:', error);
+            setError('Failed to play audio');
+          };
+
           audioElement.play().catch(error => {
             console.error('Error playing audio:', error);
             setError('Failed to play audio');
@@ -344,7 +361,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Create and send offer with specific constraints
       const offer = await peerConnection.createOffer({
         offerToReceiveAudio: true,
-        offerToReceiveVideo: false
+        offerToReceiveVideo: false,
+        iceRestart: true
       });
       await peerConnection.setLocalDescription(offer);
 
@@ -435,32 +453,12 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
-            username: 'webrtc',
-            credential: 'webrtc'
-          },
-          {
-            urls: 'turn:turn.voipstunt.com',
-            username: 'free',
-            credential: 'free'
-          },
-          {
-            urls: 'turn:turn.voipstunt.com:3478',
-            username: 'free',
-            credential: 'free'
           }
         ],
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all'
+        iceTransportPolicy: 'relay'
       });
       peerConnectionRef.current = peerConnection;
 
@@ -486,8 +484,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       peerConnection.onconnectionstatechange = () => {
         console.log('Connection state changed:', peerConnection.connectionState);
         if (peerConnection.connectionState === 'failed' || 
-            peerConnection.connectionState === 'disconnected' || 
-            peerConnection.connectionState === 'closed') {
+            peerConnection.connectionState === 'disconnected') {
           setError(`Call connection ${peerConnection.connectionState}`);
           endCall();
         }
@@ -497,8 +494,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       peerConnection.oniceconnectionstatechange = () => {
         console.log('ICE connection state:', peerConnection.iceConnectionState);
         if (peerConnection.iceConnectionState === 'failed' || 
-            peerConnection.iceConnectionState === 'disconnected' || 
-            peerConnection.iceConnectionState === 'closed') {
+            peerConnection.iceConnectionState === 'disconnected') {
           setError(`ICE connection ${peerConnection.iceConnectionState}`);
           endCall();
         }
