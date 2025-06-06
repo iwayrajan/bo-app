@@ -97,6 +97,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.error('No peer connection available');
         setError('Call connection lost');
         endCall();
+        return;
       }
 
       try {
@@ -104,6 +105,29 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.log('Setting remote description:', remoteDesc);
         await peerConnectionRef.current.setRemoteDescription(remoteDesc);
         console.log('Remote description set successfully');
+
+        // Ensure we have a local stream
+        if (!localStreamRef.current) {
+          const constraints = {
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+              sampleRate: 48000
+            },
+            video: false
+          };
+
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log('Got local media stream for accepted call');
+          localStreamRef.current = stream;
+          
+          stream.getTracks().forEach(track => {
+            console.log('Adding local track to peer connection:', track.kind, track.getSettings());
+            peerConnectionRef.current?.addTrack(track, stream);
+          });
+        }
       } catch (error) {
         console.error('Error handling call acceptance:', error);
         setError('Failed to establish call connection');
@@ -287,31 +311,15 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.log('Signaling state:', peerConnection.signalingState);
       };
 
-      // Handle negotiation needed
-      peerConnection.onnegotiationneeded = async () => {
-        console.log('Negotiation needed');
-        try {
-          const offer = await peerConnection.createOffer({
-            offerToReceiveAudio: true,
-            offerToReceiveVideo: false
-          });
-          await peerConnection.setLocalDescription(offer);
-          socket?.emit('call-user', {
-            from: username,
-            to: targetUser,
-            signal: offer
-          });
-        } catch (error) {
-          console.error('Error during negotiation:', error);
-        }
-      };
-
       // Handle incoming tracks
       peerConnection.ontrack = (event) => {
         console.log('Received remote track:', event.track.kind);
         const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
         if (audioElement && event.streams[0]) {
+          console.log('Setting remote audio stream:', event.streams[0]);
           audioElement.srcObject = event.streams[0];
+          audioElement.autoplay = true;
+          audioElement.muted = false; // Ensure audio is not muted
           audioElement.play().catch(error => {
             console.error('Error playing audio:', error);
             setError('Failed to play audio');
@@ -372,7 +380,19 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     if (!incomingCall) return;
     
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Add local stream with specific constraints for mobile
+      const constraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        },
+        video: false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('Got local media stream for incoming call');
       localStreamRef.current = stream;
       
@@ -416,14 +436,13 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'all',
-        sdpSemantics: 'unified-plan'
+        iceTransportPolicy: 'all'
       });
       peerConnectionRef.current = peerConnection;
 
       // Add local stream
       stream.getTracks().forEach(track => {
-        console.log('Adding local track to peer connection:', track.kind);
+        console.log('Adding local track to peer connection:', track.kind, track.getSettings());
         peerConnection.addTrack(track, stream);
       });
 
@@ -476,7 +495,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         console.log('Received remote track:', event.track.kind);
         const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
         if (audioElement && event.streams[0]) {
+          console.log('Setting remote audio stream:', event.streams[0]);
           audioElement.srcObject = event.streams[0];
+          audioElement.autoplay = true;
+          audioElement.muted = false; // Ensure audio is not muted
           audioElement.play().catch(error => {
             console.error('Error playing audio:', error);
             setError('Failed to play audio');
@@ -488,7 +510,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       console.log('Setting remote description for incoming call');
       await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
       console.log('Creating answer for incoming call');
-      const answer = await peerConnection.createAnswer();
+      const answer = await peerConnection.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false
+      });
       console.log('Setting local description for incoming call');
       await peerConnection.setLocalDescription(answer);
 
