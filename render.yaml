@@ -1,0 +1,36 @@
+services:
+  # Backend service
+  - type: web
+    name: chatapp-server
+    env: node
+    buildCommand: cd server && npm install
+    startCommand: cd server && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        value: https://chatapp-client.onrender.com
+      - key: PORT
+        value: 3000
+
+  # Frontend service
+  - type: web
+    name: chatapp-client
+    env: node
+    buildCommand: cd client && npm install && npm run build
+    startCommand: cd client && npm run preview
+    envVars:
+      - key: VITE_SERVER_URL
+        value: https://chatapp-server.onrender.com
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
+        sync: false 
