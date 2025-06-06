@@ -15,9 +15,10 @@ services:
         value: 3000
 
   # Frontend service
-  - type: static
+  - type: web
     name: chatapp-client
     env: static
+    plan: free
     buildCommand: cd client && npm install && npm run build
     staticPublishPath: ./client/dist
     envVars:
