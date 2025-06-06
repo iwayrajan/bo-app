@@ -1,67 +1,59 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Firestore, deleteDoc, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Message } from '../types/message';
+import { Message, Reaction } from '../types';
 import AudioCall from './AudioCall';
+import { ReactionPicker } from './ReactionPicker';
 
-interface ChatProps {
-  username: string;
-}
-
-const Chat: React.FC<ChatProps> = ({ username }) => {
-  const { socket, isConnected } = useSocket();
+const Chat: React.FC = () => {
+  const { currentUser } = useAuth();
+  const { socket, username } = useSocket();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const processedMessageIds = useRef<Set<string>>(new Set());
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
 
   // Load initial messages from Firebase
   useEffect(() => {
     console.log('Setting up Firebase listener');
-    const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
-    
+    const messagesRef = collection(db, 'messages');
+    const q = query(messagesRef, orderBy('timestamp', 'asc'));
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' && !processedMessageIds.current.has(change.doc.id)) {
-          const messageData = change.doc.data();
-          const message: Message = {
-            id: change.doc.id,
-            user: messageData.user,
-            text: messageData.text,
-            timestamp: messageData.timestamp?.toDate?.() || new Date()
-          };
-          setMessages(prev => {
-            // Check if message already exists
-            const exists = prev.some(m => m.id === message.id);
-            if (exists) {
-              console.log('Message already exists, skipping:', message);
-              return prev;
-            }
-            
-            // Add new message and sort by timestamp
-            const newMessages = [...prev, message].sort((a, b) => 
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-            );
-            return newMessages;
-          });
-          
-          processedMessageIds.current.add(change.doc.id);
-        }
+      const newMessages: Message[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        newMessages.push({
+          id: doc.id,
+          user: data.user,
+          text: data.text,
+          timestamp: data.timestamp.toDate().toISOString(),
+          reactions: data.reactions || []
+        });
       });
+      // Sort messages by timestamp
+      newMessages.sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        return timeA - timeB;
+      });
+      setMessages(newMessages);
     }, (error) => {
-      console.error('Error loading messages from Firebase:', error);
-      setError('Failed to load messages. Please try again later.');
+      console.error('Error fetching messages:', error);
+      setError('Failed to load messages');
     });
 
     return () => {
       console.log('Cleaning up Firebase listener');
       unsubscribe();
     };
-  }, [processedMessageIds]);
+  }, []); // Empty dependency array since we want this to run only once
 
   // Handle real-time messages
   useEffect(() => {
@@ -74,46 +66,84 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
     console.log('Current socket ID:', socket.id);
 
     const handleMessage = (message: Message) => {
-      console.log('Received message:', message);
-      setMessages(prevMessages => {
-        const newMessages = [...prevMessages, message];
-        return newMessages.sort((a, b) => {
-          const timeA = new Date(a.timestamp).getTime();
-          const timeB = new Date(b.timestamp).getTime();
-          return timeA - timeB;
+      console.log('Received message from socket:', message);
+      // Only add message if it's not from the current user
+      if (message.user !== username) {
+        setMessages(prevMessages => {
+          // Check if message already exists
+          const exists = prevMessages.some(m => m.id === message.id);
+          if (exists) {
+            console.log('Message already exists, skipping:', message);
+            return prevMessages;
+          }
+          
+          // Add new message and sort
+          const newMessages = [...prevMessages, message].sort((a, b) => {
+            const timeA = new Date(a.timestamp).getTime();
+            const timeB = new Date(b.timestamp).getTime();
+            return timeA - timeB;
+          });
+          return newMessages;
         });
-      });
+      }
     };
 
-    const handleUserJoined = (data: { username: string; message: string }) => {
-      console.log('User joined:', data);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        user: 'System',
-        text: data.message,
-        timestamp: new Date()
-      }]);
+    const handleReaction = (data: { messageId: string; reaction: Reaction }) => {
+      console.log('Received reaction:', data);
+      setMessages(prevMessages => 
+        prevMessages.map(msg => {
+          if (msg.id === data.messageId) {
+            const existingReaction = msg.reactions?.find(r => r.emoji === data.reaction.emoji);
+            if (existingReaction) {
+              return {
+                ...msg,
+                reactions: msg.reactions?.map(r => 
+                  r.emoji === data.reaction.emoji ? data.reaction : r
+                )
+              };
+            }
+            return {
+              ...msg,
+              reactions: [...(msg.reactions || []), data.reaction]
+            };
+          }
+          return msg;
+        })
+      );
     };
 
-    const handleUserLeft = (data: { username: string; message: string }) => {
-      console.log('User left:', data);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        user: 'System',
-        text: data.message,
-        timestamp: new Date()
-      }]);
+    const handleReactionRemoved = (data: { messageId: string; emoji: string; username: string }) => {
+      console.log('Reaction removed:', data);
+      setMessages(prevMessages => 
+        prevMessages.map(msg => {
+          if (msg.id === data.messageId) {
+            return {
+              ...msg,
+              reactions: msg.reactions?.map(reaction => {
+                if (reaction.emoji === data.emoji) {
+                  return {
+                    ...reaction,
+                    users: reaction.users.filter(user => user !== data.username)
+                  };
+                }
+                return reaction;
+              }).filter(reaction => reaction.users.length > 0)
+            };
+          }
+          return msg;
+        })
+      );
     };
 
     socket.on('message', handleMessage);
-    socket.on('user-joined', handleUserJoined);
-    socket.on('user-left', handleUserLeft);
+    socket.on('message-reaction', handleReaction);
+    socket.on('message-reaction-removed', handleReactionRemoved);
 
     return () => {
       console.log('Cleaning up message handlers');
       socket.off('message', handleMessage);
-      socket.off('user-joined', handleUserJoined);
-      socket.off('user-left', handleUserLeft);
+      socket.off('message-reaction', handleReaction);
+      socket.off('message-reaction-removed', handleReactionRemoved);
     };
   }, [socket, username]);
 
@@ -122,24 +152,73 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!socket || !isConnected || !username) {
-      console.log('Cannot send message: socket not connected or username not set');
-      setError('Cannot send message: not connected');
-      return;
+    if (!newMessage.trim() || !socket || !username) return;
+
+    try {
+      // Save to Firebase first
+      const docRef = await addDoc(collection(db, 'messages'), {
+        user: username,
+        text: newMessage,
+        timestamp: new Date(),
+        reactions: []
+      });
+
+      // Create message with Firebase ID
+      const message: Message = {
+        id: docRef.id,
+        user: username,
+        text: newMessage,
+        timestamp: new Date().toISOString(),
+        reactions: []
+      };
+
+      // Don't update local state here - let Firebase's onSnapshot handle it
+      // Emit to socket for other users
+      socket.emit('send-message', message);
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setError('Failed to send message');
     }
+  };
 
-    if (!newMessage.trim()) return;
+  const handleReaction = (messageId: string, emoji: string) => {
+    if (!socket || !username) return;
 
-    const message = {
-      id: Date.now().toString(),
-      text: newMessage.trim()
-    };
+    const message = messages.find(m => m.id === messageId);
+    if (!message) return;
 
-    console.log('Sending message:', message);
-    socket.emit('message', message);
-    setNewMessage('');
+    const existingReaction = message.reactions?.find(r => r.emoji === emoji);
+    if (existingReaction) {
+      if (existingReaction.users.includes(username)) {
+        // Remove reaction
+        socket.emit('remove-reaction', {
+          messageId,
+          emoji,
+          username
+        });
+      } else {
+        // Add user to reaction
+        socket.emit('add-reaction', {
+          messageId,
+          reaction: {
+            emoji,
+            users: [...existingReaction.users, username]
+          }
+        });
+      }
+    } else {
+      // Add new reaction
+      socket.emit('add-reaction', {
+        messageId,
+        reaction: {
+          emoji,
+          users: [username]
+        }
+      });
+    }
   };
 
   const clearChat = async () => {
@@ -165,8 +244,8 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
   return (
     <div className="flex flex-col h-screen bg-gray-100">
       {/* Connection Status */}
-      <div className={`p-2 text-center text-sm ${isConnected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-        {isConnected ? 'Connected' : 'Disconnected'}
+      <div className={`p-2 text-center text-sm ${socket ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+        {socket ? 'Connected' : 'Disconnected'}
       </div>
 
       {/* Messages */}
@@ -179,7 +258,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
             }`}
           >
             <div
-              className={`max-w-[70%] rounded-lg p-3 ${
+              className={`max-w-[70%] rounded-lg p-3 relative ${
                 message.user === username
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-200 text-gray-800'
@@ -189,6 +268,37 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
               </div>
+              {message.reactions && message.reactions.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {message.reactions.map((reaction) => (
+                    <button
+                      key={reaction.emoji}
+                      onClick={() => handleReaction(message.id, reaction.emoji)}
+                      className={`px-2 py-1 rounded-full text-xs ${
+                        username && reaction.users.includes(username)
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-800'
+                      }`}
+                    >
+                      {reaction.emoji} {reaction.users.length}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={() => setShowReactionPicker(message.id)}
+                className="absolute -bottom-2 right-0 text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-sm"
+              >
+                😀
+              </button>
+              {showReactionPicker === message.id && (
+                <div className="absolute bottom-full right-0 mb-2">
+                  <ReactionPicker
+                    onSelect={(emoji) => handleReaction(message.id, emoji)}
+                    onClose={() => setShowReactionPicker(null)}
+                  />
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -196,7 +306,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
       </div>
 
       {/* Message Input */}
-      <form onSubmit={sendMessage} className="p-4 bg-white border-t">
+      <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">
         <div className="flex space-x-2">
           <input
             type="text"
@@ -207,7 +317,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
           />
           <button
             type="submit"
-            disabled={!isConnected}
+            disabled={!socket}
             className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <PaperAirplaneIcon className="h-5 w-5" />
@@ -242,7 +352,7 @@ const Chat: React.FC<ChatProps> = ({ username }) => {
       </div>
 
       {/* Audio Call Component */}
-      <AudioCall username={username} />
+      {username && <AudioCall username={username} />}
     </div>
   );
 };

@@ -52,40 +52,6 @@ io.on('connection', (socket) => {
     socket.emit('username-set', { username });
   });
 
-  socket.on('message', (data) => {
-    // Find the username for this socket
-    let senderUsername = null;
-    for (const [username, id] of connectedUsers.entries()) {
-      if (id === socket.id) {
-        senderUsername = username;
-        break;
-      }
-    }
-
-    if (!senderUsername) {
-      console.log('Message received from unknown user:', socket.id);
-      return;
-    }
-
-    const message = {
-      id: data.id,
-      user: senderUsername,
-      text: data.text,
-      timestamp: new Date()
-    };
-    
-    console.log('Broadcasting message:', {
-      from: senderUsername,
-      text: data.text,
-      socketId: socket.id
-    });
-
-    // Use broadcast.emit to send to all clients except sender
-    socket.broadcast.emit('message', message);
-    // Send back to sender
-    socket.emit('message', message);
-  });
-
   // WebRTC Signaling
   socket.on('call-user', (data) => {
     console.log('Call attempt:', {
@@ -247,6 +213,26 @@ io.on('connection', (socket) => {
     } else {
       console.log('Target user not found for call failed message:', data.to);
     }
+  });
+
+  // Handle incoming messages
+  socket.on('send-message', (message) => {
+    console.log('Received message:', message);
+    // Broadcast to all clients except sender
+    socket.broadcast.emit('message', message);
+  });
+
+  // Handle reactions
+  socket.on('add-reaction', (data) => {
+    console.log('Received reaction:', data);
+    // Broadcast to all clients except sender
+    socket.broadcast.emit('message-reaction', data);
+  });
+
+  socket.on('remove-reaction', (data) => {
+    console.log('Received reaction removal:', data);
+    // Broadcast to all clients except sender
+    socket.broadcast.emit('message-reaction-removed', data);
   });
 
   socket.on('disconnect', () => {
