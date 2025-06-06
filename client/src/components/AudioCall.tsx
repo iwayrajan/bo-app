@@ -170,10 +170,6 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const startCall = async (targetUser: string) => {
     console.log('Starting call to:', targetUser);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('Got local media stream');
-      localStreamRef.current = stream;
-      
       const peerConnection = new RTCPeerConnection({
         iceServers: [
           {
@@ -199,6 +195,16 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+            username: 'webrtc',
+            credential: 'webrtc'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
+            username: 'webrtc',
+            credential: 'webrtc'
           }
         ],
         iceCandidatePoolSize: 10,
@@ -208,11 +214,32 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       });
       peerConnectionRef.current = peerConnection;
 
-      // Add local stream
-      stream.getTracks().forEach(track => {
-        console.log('Adding local track to peer connection:', track.kind);
-        peerConnection.addTrack(track, stream);
-      });
+      // Add local stream with specific constraints for mobile
+      const constraints = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        },
+        video: false
+      };
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log('Got local media stream with constraints:', constraints);
+        localStreamRef.current = stream;
+        
+        stream.getTracks().forEach(track => {
+          console.log('Adding local track to peer connection:', track.kind, track.getSettings());
+          peerConnection.addTrack(track, stream);
+        });
+      } catch (error) {
+        console.error('Error getting media stream:', error);
+        setError('Failed to access microphone');
+        return;
+      }
 
       // Handle ICE candidates
       peerConnection.onicecandidate = (event) => {
@@ -374,6 +401,16 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+            username: 'webrtc',
+            credential: 'webrtc'
+          },
+          {
+            urls: 'turn:turn.anyfirewall.com:3478?transport=udp',
+            username: 'webrtc',
+            credential: 'webrtc'
           }
         ],
         iceCandidatePoolSize: 10,
