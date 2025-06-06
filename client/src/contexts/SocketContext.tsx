@@ -19,7 +19,7 @@ export const useSocket = () => {
 };
 
 const SOCKET_URL = import.meta.env.PROD 
-  ? 'https://your-app-name.onrender.com'
+  ? 'https://chatapp-server-oao2.onrender.com'
   : 'http://localhost:3000';
 
 interface SocketProviderProps {
