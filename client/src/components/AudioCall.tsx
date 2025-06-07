@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../contexts/SocketContext';
-import { JitsiMeeting } from '@jitsi/react-sdk';
+import * as mediasoupClient from 'mediasoup-client';
 
 interface AudioCallProps {
   username: string;
@@ -12,16 +12,24 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [remoteUser, setRemoteUser] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [incomingCall, setIncomingCall] = useState<{ from: string; roomName: string } | null>(null);
-  const [roomName, setRoomName] = useState<string | null>(null);
+  const [incomingCall, setIncomingCall] = useState<{ from: string; roomId: string } | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(null);
+
+  // Mediasoup refs
+  const deviceRef = useRef<mediasoupClient.Device | null>(null);
+  const producerTransportRef = useRef<mediasoupClient.types.Transport | null>(null);
+  const consumerTransportRef = useRef<mediasoupClient.types.Transport | null>(null);
+  const producerRef = useRef<mediasoupClient.types.Producer | null>(null);
+  const consumerRef = useRef<mediasoupClient.types.Consumer | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     if (!socket) return;
 
-    const handleIncomingCall = (data: { from: string; roomName: string }) => {
+    const handleIncomingCall = (data: { from: string; roomId: string }) => {
       console.log('Incoming call received:', {
         from: data.from,
-        roomName: data.roomName,
+        roomId: data.roomId,
         currentUser: username
       });
       
@@ -34,19 +42,9 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         return;
       }
 
-      // Validate roomName
-      if (!data.roomName) {
-        console.error('Invalid call: missing roomName');
-        socket.emit('call-failed', {
-          to: data.from,
-          message: 'Invalid call: missing room information'
-        });
-        return;
-      }
-
       setIncomingCall({
         from: data.from,
-        roomName: data.roomName
+        roomId: data.roomId
       });
     };
 
@@ -66,15 +64,94 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
   const startCall = async (targetUser: string) => {
     try {
-      // Generate a unique room name
-      const newRoomName = `${username}-${targetUser}-${Date.now()}`;
-      setRoomName(newRoomName);
+      // Generate a unique room ID
+      const newRoomId = `${username}-${targetUser}-${Date.now()}`;
+      setRoomId(newRoomId);
       
+      // Initialize mediasoup device
+      deviceRef.current = new mediasoupClient.Device();
+
+      // Get local audio stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        },
+        video: false
+      });
+      audioStreamRef.current = stream;
+
+      // Create producer transport
+      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise((resolve, reject) => {
+        socket.emit('createWebRtcTransport', { roomId: newRoomId }, (response) => {
+          if (response.error) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      producerTransportRef.current = deviceRef.current.createSendTransport({
+        id,
+        iceParameters,
+        iceCandidates,
+        dtlsParameters
+      });
+
+      producerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await new Promise((resolve, reject) => {
+            socket.emit('connectTransport', {
+              transportId: producerTransportRef.current?.id,
+              dtlsParameters
+            }, (response) => {
+              if (response.error) {
+                reject(response.error);
+              } else {
+                resolve(response);
+              }
+            });
+          });
+          callback();
+        } catch (error) {
+          errback(error);
+        }
+      });
+
+      producerTransportRef.current.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+        try {
+          const { id } = await new Promise((resolve, reject) => {
+            socket.emit('produce', {
+              transportId: producerTransportRef.current?.id,
+              kind,
+              rtpParameters
+            }, (response) => {
+              if (response.error) {
+                reject(response.error);
+              } else {
+                resolve(response);
+              }
+            });
+          });
+          callback({ id });
+        } catch (error) {
+          errback(error);
+        }
+      });
+
+      // Start producing
+      const track = stream.getAudioTracks()[0];
+      producerRef.current = await producerTransportRef.current.produce({ track });
+
       // Notify the target user
-      socket?.emit('call-user', {
+      socket.emit('call-user', {
         from: username,
         to: targetUser,
-        roomName: newRoomName
+        roomId: newRoomId
       });
 
       setRemoteUser(targetUser);
@@ -87,23 +164,128 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   };
 
   const endCall = () => {
+    if (producerRef.current) {
+      producerRef.current.close();
+    }
+    if (consumerRef.current) {
+      consumerRef.current.close();
+    }
+    if (producerTransportRef.current) {
+      producerTransportRef.current.close();
+    }
+    if (consumerTransportRef.current) {
+      consumerTransportRef.current.close();
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => track.stop());
+    }
+
     if (remoteUser) {
       socket?.emit('end-call', { to: remoteUser });
     }
     setIsCallActive(false);
     setRemoteUser(null);
-    setRoomName(null);
+    setRoomId(null);
     setIncomingCall(null);
   };
 
-  const acceptCall = () => {
+  const acceptCall = async () => {
     if (!incomingCall) return;
     
-    setRoomName(incomingCall.roomName);
-    setRemoteUser(incomingCall.from);
-    setIsCallActive(true);
-    setIsMuted(false);
-    setIncomingCall(null);
+    try {
+      // Initialize mediasoup device
+      deviceRef.current = new mediasoupClient.Device();
+
+      // Get local audio stream
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000
+        },
+        video: false
+      });
+      audioStreamRef.current = stream;
+
+      // Create producer transport
+      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise((resolve, reject) => {
+        socket.emit('createWebRtcTransport', { roomId: incomingCall.roomId }, (response) => {
+          if (response.error) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      producerTransportRef.current = deviceRef.current.createSendTransport({
+        id,
+        iceParameters,
+        iceCandidates,
+        dtlsParameters
+      });
+
+      producerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await new Promise((resolve, reject) => {
+            socket.emit('connectTransport', {
+              transportId: producerTransportRef.current?.id,
+              dtlsParameters
+            }, (response) => {
+              if (response.error) {
+                reject(response.error);
+              } else {
+                resolve(response);
+              }
+            });
+          });
+          callback();
+        } catch (error) {
+          errback(error);
+        }
+      });
+
+      producerTransportRef.current.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+        try {
+          const { id } = await new Promise((resolve, reject) => {
+            socket.emit('produce', {
+              transportId: producerTransportRef.current?.id,
+              kind,
+              rtpParameters
+            }, (response) => {
+              if (response.error) {
+                reject(response.error);
+              } else {
+                resolve(response);
+              }
+            });
+          });
+          callback({ id });
+        } catch (error) {
+          errback(error);
+        }
+      });
+
+      // Start producing
+      const track = stream.getAudioTracks()[0];
+      producerRef.current = await producerTransportRef.current.produce({ track });
+
+      setRoomId(incomingCall.roomId);
+      setRemoteUser(incomingCall.from);
+      setIsCallActive(true);
+      setIsMuted(false);
+      setIncomingCall(null);
+    } catch (error) {
+      console.error('Error accepting call:', error);
+      setError('Failed to accept call');
+      socket?.emit('call-failed', {
+        to: incomingCall.from,
+        message: 'Failed to accept call'
+      });
+      setIncomingCall(null);
+    }
   };
 
   const rejectCall = () => {
@@ -141,55 +323,18 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       )}
 
       {/* Active Call UI */}
-      {isCallActive && roomName && (
+      {isCallActive && (
         <div className="bg-white rounded-lg shadow-lg p-4">
           <div className="text-lg font-semibold mb-2">Call with {remoteUser}</div>
-          <div className="w-[400px] h-[300px]">
-            <JitsiMeeting
-              domain="meet.jit.si"
-              roomName={roomName}
-              configOverwrite={{
-                startWithAudioMuted: isMuted,
-                disableDeepLinking: true,
-                prejoinPageEnabled: false
-              }}
-              interfaceConfigOverwrite={{
-                TOOLBAR_BUTTONS: [
-                  'microphone',
-                  'camera',
-                  'closedcaptions',
-                  'desktop',
-                  'fullscreen',
-                  'fodeviceselection',
-                  'hangup',
-                  'profile',
-                  'chat',
-                  'recording',
-                  'shortcuts',
-                  'tileview',
-                  'select-background',
-                  'download',
-                  'help',
-                  'mute-everyone',
-                  'security'
-                ],
-                SHOW_JITSI_WATERMARK: false,
-                SHOW_WATERMARK_FOR_GUESTS: false,
-                DEFAULT_REMOTE_DISPLAY_NAME: remoteUser || 'Remote User',
-                DEFAULT_LOCAL_DISPLAY_NAME: username
-              }}
-              userInfo={{
-                displayName: username
-              }}
-              getIFrameRef={(iframeRef: HTMLIFrameElement) => {
-                iframeRef.style.height = '100%';
-                iframeRef.style.width = '100%';
-              }}
-            />
-          </div>
-          <div className="flex space-x-2 mt-2">
+          <div className="flex space-x-2">
             <button
-              onClick={() => setIsMuted(!isMuted)}
+              onClick={() => {
+                if (producerRef.current) {
+                  const track = producerRef.current.track;
+                  track.enabled = !track.enabled;
+                  setIsMuted(!isMuted);
+                }
+              }}
               className={`px-4 py-2 rounded ${
                 isMuted ? 'bg-red-500' : 'bg-blue-500'
               } text-white hover:opacity-90`}

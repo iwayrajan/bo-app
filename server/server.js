@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const mediasoup = require('mediasoup');
 
 const app = express();
 const server = http.createServer(app);
@@ -26,11 +27,51 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true
   },
-  transports: ['websocket', 'polling'], // Allow both WebSocket and polling
+  transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
-  allowEIO3: true // Allow Engine.IO version 3
+  allowEIO3: true
 });
+
+// Mediasoup workers
+let mediasoupWorker;
+const mediasoupRouter = new Map(); // roomId -> router
+const producerTransports = new Map(); // transportId -> transport
+const consumerTransports = new Map(); // transportId -> transport
+const producers = new Map(); // producerId -> producer
+const consumers = new Map(); // consumerId -> consumer
+
+// Initialize mediasoup worker
+async function initializeMediasoup() {
+  mediasoupWorker = await mediasoup.createWorker({
+    logLevel: 'warn',
+    rtcMinPort: 10000,
+    rtcMaxPort: 10100,
+  });
+
+  console.log('Mediasoup worker created');
+}
+
+// Create mediasoup router for a room
+async function createRouter(roomId) {
+  if (mediasoupRouter.has(roomId)) {
+    return mediasoupRouter.get(roomId);
+  }
+
+  const router = await mediasoupWorker.createRouter({
+    mediaCodecs: [
+      {
+        kind: 'audio',
+        mimeType: 'audio/opus',
+        clockRate: 48000,
+        channels: 2,
+      },
+    ],
+  });
+
+  mediasoupRouter.set(roomId, router);
+  return router;
+}
 
 // Store connected users and call timeouts
 const connectedUsers = new Map();
@@ -44,197 +85,134 @@ io.on('connection', (socket) => {
     connectedUsers.set(username, socket.id);
     console.log('Current connected users:', Object.fromEntries(connectedUsers));
     
-    // Broadcast to all clients that a new user has joined
     io.emit('user-joined', {
       username,
       message: `${username} has joined the chat`
     });
 
-    // Send confirmation to the user
     socket.emit('username-set', { username });
   });
 
-  // WebRTC Signaling
-  socket.on('call-user', (data) => {
-    console.log('Call attempt:', {
-      from: data.from,
-      to: data.to,
-      roomName: data.roomName,
-      signal: data.signal ? 'signal present' : 'no signal'
-    });
-    console.log('Current connected users:', Object.fromEntries(connectedUsers));
-    
-    const targetSocketId = connectedUsers.get(data.to);
-    console.log('Target socket ID for', data.to, ':', targetSocketId);
-    
-    if (targetSocketId) {
-      console.log(`Sending call to ${data.to} (socket: ${targetSocketId})`);
-      io.to(targetSocketId).emit('incoming-call', {
-        from: data.from,
-        roomName: data.roomName
+  // Mediasoup WebRTC transport creation
+  socket.on('createWebRtcTransport', async ({ roomId }, callback) => {
+    try {
+      const router = await createRouter(roomId);
+      const transport = await router.createWebRtcTransport({
+        listenIps: [
+          {
+            ip: '0.0.0.0',
+            announcedIp: process.env.NODE_ENV === 'production' 
+              ? process.env.SERVER_IP 
+              : '127.0.0.1'
+          }
+        ],
+        enableUdp: true,
+        enableTcp: true,
+        preferUdp: true,
       });
 
-      // Clear any existing timeouts for this call pair
-      const timeoutKey1 = `${data.from}-${data.to}`;
-      const timeoutKey2 = `${data.to}-${data.from}`;
-      const existingTimeout1 = callTimeouts.get(timeoutKey1);
-      const existingTimeout2 = callTimeouts.get(timeoutKey2);
-      
-      if (existingTimeout1) {
-        clearTimeout(existingTimeout1);
-        callTimeouts.delete(timeoutKey1);
-        console.log('Cleared existing timeout for:', timeoutKey1);
+      transport.observer.on('close', () => {
+        transport.close();
+      });
+
+      producerTransports.set(transport.id, transport);
+
+      callback({
+        id: transport.id,
+        iceParameters: transport.iceParameters,
+        iceCandidates: transport.iceCandidates,
+        dtlsParameters: transport.dtlsParameters,
+      });
+    } catch (error) {
+      console.error('Error creating WebRTC transport:', error);
+      callback({ error: 'Failed to create transport' });
+    }
+  });
+
+  // Connect transport
+  socket.on('connectTransport', async ({ transportId, dtlsParameters }, callback) => {
+    try {
+      const transport = producerTransports.get(transportId);
+      if (!transport) {
+        throw new Error('Transport not found');
       }
-      if (existingTimeout2) {
-        clearTimeout(existingTimeout2);
-        callTimeouts.delete(timeoutKey2);
-        console.log('Cleared existing timeout for:', timeoutKey2);
+
+      await transport.connect({ dtlsParameters });
+      callback({ success: true });
+    } catch (error) {
+      console.error('Error connecting transport:', error);
+      callback({ error: 'Failed to connect transport' });
+    }
+  });
+
+  // Produce audio
+  socket.on('produce', async ({ transportId, kind, rtpParameters }, callback) => {
+    try {
+      const transport = producerTransports.get(transportId);
+      if (!transport) {
+        throw new Error('Transport not found');
       }
 
-      // Set a new timeout
-      const timeoutId = setTimeout(() => {
-        const currentSocketId = connectedUsers.get(data.to);
-        if (currentSocketId === targetSocketId) {
-          console.log(`Call timeout for ${data.to}`);
-          io.to(targetSocketId).emit('call-failed', {
-            message: 'Call timed out'
-          });
-          socket.emit('call-failed', {
-            message: 'Call timed out'
-          });
-        }
-      }, 30000);
+      const producer = await transport.produce({ kind, rtpParameters });
+      producers.set(producer.id, producer);
 
-      // Store the new timeout
-      callTimeouts.set(timeoutKey1, timeoutId);
-      callTimeouts.set(timeoutKey2, timeoutId);
-      console.log('Stored new timeout for keys:', timeoutKey1, timeoutKey2);
-    } else {
-      console.log(`User ${data.to} not found in connected users. Available users:`, Object.fromEntries(connectedUsers));
-      socket.emit('call-failed', {
-        message: 'User is not connected'
+      producer.observer.on('close', () => {
+        producers.delete(producer.id);
       });
+
+      callback({ id: producer.id });
+    } catch (error) {
+      console.error('Error producing:', error);
+      callback({ error: 'Failed to produce' });
     }
   });
 
-  socket.on('call-answer', (data) => {
-    console.log('Call answer received:', {
-      from: data.from,
-      to: data.to,
-      signalType: data.signal.type
-    });
+  // Consume audio
+  socket.on('consume', async ({ transportId, producerId, rtpCapabilities }, callback) => {
+    try {
+      const transport = consumerTransports.get(transportId);
+      if (!transport) {
+        throw new Error('Transport not found');
+      }
 
-    // Clear the timeout since the call was accepted
-    const timeoutKey1 = `${data.from}-${data.to}`;
-    const timeoutKey2 = `${data.to}-${data.from}`;
-    const timeoutId1 = callTimeouts.get(timeoutKey1);
-    const timeoutId2 = callTimeouts.get(timeoutKey2);
-
-    if (timeoutId1) {
-      clearTimeout(timeoutId1);
-      callTimeouts.delete(timeoutKey1);
-      console.log('Cleared call timeout for:', timeoutKey1);
-    }
-    if (timeoutId2) {
-      clearTimeout(timeoutId2);
-      callTimeouts.delete(timeoutKey2);
-      console.log('Cleared call timeout for:', timeoutKey2);
-    }
-
-    const targetUser = connectedUsers.get(data.to);
-    if (targetUser) {
-      console.log('Sending call answer to:', data.to);
-      io.to(targetUser).emit('call-accepted', {
-        from: data.from,
-        signal: data.signal
+      const consumer = await transport.consume({
+        producerId,
+        rtpCapabilities,
+        paused: true,
       });
-    } else {
-      console.log('Target user not found for call answer:', data.to);
-    }
-  });
 
-  socket.on('ice-candidate', (data) => {
-    console.log('ICE candidate received:', {
-      from: data.from,
-      to: data.to,
-      candidate: data.candidate ? 'present' : 'null'
-    });
-    
-    const targetSocketId = connectedUsers.get(data.to);
-    if (targetSocketId) {
-      console.log(`Sending ICE candidate to ${data.to} (socket: ${targetSocketId})`);
-      io.to(targetSocketId).emit('ice-candidate', {
-        from: data.from,
-        candidate: data.candidate
+      consumers.set(consumer.id, consumer);
+
+      consumer.observer.on('close', () => {
+        consumers.delete(consumer.id);
       });
-    } else {
-      console.log(`Target user ${data.to} not found for ICE candidate`);
-    }
-  });
 
-  socket.on('end-call', ({ to }) => {
-    console.log(`Call ended from ${socket.username} to ${to}`);
-    const targetSocketId = connectedUsers.get(to);
-    if (targetSocketId) {
-      console.log(`Sending call ended to ${to} (socket ID: ${targetSocketId})`);
-      io.to(targetSocketId).emit('call-ended', {
-        from: socket.username
+      callback({
+        id: consumer.id,
+        kind: consumer.kind,
+        rtpParameters: consumer.rtpParameters,
+        producerId: producer.id,
       });
-    }
-  });
-
-  socket.on('call-failed', (data) => {
-    console.log('Call failed:', {
-      from: data.from,
-      to: data.to,
-      message: data.message
-    });
-
-    // Clear the timeout since the call was rejected
-    const timeoutKey1 = `${data.from}-${data.to}`;
-    const timeoutKey2 = `${data.to}-${data.from}`;
-    const timeoutId1 = callTimeouts.get(timeoutKey1);
-    const timeoutId2 = callTimeouts.get(timeoutKey2);
-
-    if (timeoutId1) {
-      clearTimeout(timeoutId1);
-      callTimeouts.delete(timeoutKey1);
-      console.log('Cleared call timeout for:', timeoutKey1);
-    }
-    if (timeoutId2) {
-      clearTimeout(timeoutId2);
-      callTimeouts.delete(timeoutKey2);
-      console.log('Cleared call timeout for:', timeoutKey2);
-    }
-
-    const targetUser = connectedUsers.get(data.to);
-    if (targetUser) {
-      console.log('Sending call failed message to:', data.to);
-      io.to(targetUser).emit('call-failed', {
-        message: data.message
-      });
-    } else {
-      console.log('Target user not found for call failed message:', data.to);
+    } catch (error) {
+      console.error('Error consuming:', error);
+      callback({ error: 'Failed to consume' });
     }
   });
 
   // Handle incoming messages
   socket.on('send-message', (message) => {
     console.log('Received message:', message);
-    // Broadcast to all clients except sender
     socket.broadcast.emit('message', message);
   });
 
   // Handle reactions
   socket.on('add-reaction', (data) => {
     console.log('Received reaction:', data);
-    // Broadcast to all clients except sender
     socket.broadcast.emit('message-reaction', data);
   });
 
   socket.on('remove-reaction', (data) => {
     console.log('Received reaction removal:', data);
-    // Broadcast to all clients except sender
     socket.broadcast.emit('message-reaction-removed', data);
   });
 
@@ -250,11 +228,10 @@ io.on('connection', (socket) => {
     }
     
     if (disconnectedUser) {
-      console.log(`User ${disconnectedUser} disconnected`);
       connectedUsers.delete(disconnectedUser);
-      console.log('Remaining connected users:', Object.fromEntries(connectedUsers));
+      console.log(`User ${disconnectedUser} disconnected`);
       
-      // Broadcast to all clients that the user has left
+      // Notify other users
       io.emit('user-left', {
         username: disconnectedUser,
         message: `${disconnectedUser} has left the chat`
@@ -263,7 +240,10 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Initialize mediasoup and start server
+initializeMediasoup().then(() => {
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
 }); 
