@@ -1,73 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSocket } from '../contexts/SocketContext';
+import { JitsiMeeting } from '@jitsi/react-sdk';
 
 interface AudioCallProps {
   username: string;
 }
 
 const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
-  const { socket, isConnected } = useSocket();
+  const { socket } = useSocket();
   const [isCallActive, setIsCallActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [remoteUser, setRemoteUser] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [incomingCall, setIncomingCall] = useState<{ from: string; offer: RTCSessionDescriptionInit } | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const [incomingCall, setIncomingCall] = useState<{ from: string; roomName: string } | null>(null);
+  const [roomName, setRoomName] = useState<string | null>(null);
 
   useEffect(() => {
-    // Request microphone access when component mounts
-    const requestMicrophoneAccess = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log('Microphone access granted');
-        // Stop the stream immediately since we don't need it yet
-        stream.getTracks().forEach(track => track.stop());
-      } catch (error) {
-        console.error('Error requesting microphone access:', error);
-        setError('Please allow microphone access to use audio calls');
-      }
-    };
-
-    requestMicrophoneAccess();
-  }, []); // Empty dependency array means this runs once when component mounts
-
-  useEffect(() => {
-    if (!socket) {
-      console.log('Socket not available, skipping call handler setup');
-      return;
-    }
-
-    if (!socket.connected) {
-      console.log('Socket not connected, waiting for connection...');
-      const handleConnect = () => {
-        console.log('Socket connected, setting up call handlers');
-        setupCallHandlers();
-      };
-      socket.on('connect', handleConnect);
-      return () => {
-        socket.off('connect', handleConnect);
-      };
-    }
-
-    setupCallHandlers();
-  }, [socket, username]);
-
-  const setupCallHandlers = () => {
     if (!socket) return;
 
-    console.log('Setting up call handlers for user:', username);
-    console.log('Current socket ID:', socket.id);
-    console.log('Current call state:', { isCallActive, remoteUser });
-
-    const handleIncomingCall = async (data: { from: string; signal: any }) => {
+    const handleIncomingCall = (data: { from: string; roomName: string }) => {
       console.log('Incoming call received:', {
         from: data.from,
-        signalType: data.signal?.type,
-        currentUser: username,
-        socketId: socket.id
+        roomName: data.roomName,
+        currentUser: username
       });
-      console.log('Current call state:', { isCallActive, remoteUser });
       
       if (isCallActive) {
         console.log('Already in a call, rejecting incoming call');
@@ -78,304 +34,42 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         return;
       }
 
-      // Set the incoming call state
       setIncomingCall({
         from: data.from,
-        offer: data.signal
+        roomName: data.roomName
       });
-    };
-
-    const handleCallAccepted = async (data: { from: string; signal: any }) => {
-      console.log('Call accepted:', {
-        from: data.from,
-        signalType: data.signal?.type,
-        currentUser: username,
-        socketId: socket.id
-      });
-      
-      if (!peerConnectionRef.current) {
-        console.error('No peer connection available');
-        setError('Call connection lost');
-        endCall();
-        return;
-      }
-
-      try {
-        const remoteDesc = new RTCSessionDescription(data.signal);
-        console.log('Setting remote description:', remoteDesc);
-        await peerConnectionRef.current.setRemoteDescription(remoteDesc);
-        console.log('Remote description set successfully');
-
-        // Ensure we have a local stream
-        if (!localStreamRef.current) {
-          const constraints = {
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 1,
-              sampleRate: 48000
-            },
-            video: false
-          };
-
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          console.log('Got local media stream for accepted call');
-          localStreamRef.current = stream;
-          
-          stream.getTracks().forEach(track => {
-            console.log('Adding local track to peer connection:', track.kind, track.getSettings());
-            peerConnectionRef.current?.addTrack(track, stream);
-          });
-        }
-      } catch (error) {
-        console.error('Error handling call acceptance:', error);
-        setError('Failed to establish call connection');
-        endCall();
-      }
-    };
-
-    const handleCallFailed = (data: { message: string }) => {
-      console.error('Call failed:', {
-        message: data.message,
-        currentUser: username,
-        socketId: socket.id
-      });
-      setError(data.message);
-      setIncomingCall(null); // Clear incoming call state
-      endCall();
-    };
-
-    const handleIceCandidate = async (data: { from: string; candidate: RTCIceCandidate }) => {
-      console.log('Received ICE candidate:', {
-        from: data.from,
-        candidate: data.candidate ? 'present' : 'null',
-        currentUser: username,
-        socketId: socket.id
-      });
-      if (!peerConnectionRef.current) {
-        console.error('No peer connection available for ICE candidate');
-        return;
-      }
-
-      try {
-        if (data.candidate) {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-          console.log('ICE candidate added successfully');
-        } else {
-          console.log('Received null ICE candidate, skipping');
-        }
-      } catch (error) {
-        console.error('Error adding ICE candidate:', error);
-      }
     };
 
     const handleCallEnded = () => {
-      console.log('Call ended by remote user:', {
-        currentUser: username,
-        socketId: socket.id
-      });
+      console.log('Call ended by remote user');
       endCall();
     };
 
-    // Set up event listeners
     socket.on('incoming-call', handleIncomingCall);
-    socket.on('call-accepted', handleCallAccepted);
-    socket.on('call-failed', handleCallFailed);
-    socket.on('ice-candidate', handleIceCandidate);
     socket.on('call-ended', handleCallEnded);
 
     return () => {
-      console.log('Cleaning up call handlers for user:', username);
       socket.off('incoming-call', handleIncomingCall);
-      socket.off('call-accepted', handleCallAccepted);
-      socket.off('call-failed', handleCallFailed);
-      socket.off('ice-candidate', handleIceCandidate);
       socket.off('call-ended', handleCallEnded);
     };
-  };
+  }, [socket, username, isCallActive]);
 
   const startCall = async (targetUser: string) => {
-    console.log('Starting call to:', targetUser);
     try {
-      const peerConnection = new RTCPeerConnection({
-        iceServers: [
-          {
-            urls: [
-              'stun:stun.l.google.com:19302',
-              'stun:stun1.l.google.com:19302',
-              'stun:stun2.l.google.com:19302',
-              'stun:stun3.l.google.com:19302',
-              'stun:stun4.l.google.com:19302'
-            ]
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          }
-        ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'relay'
-      });
-      peerConnectionRef.current = peerConnection;
-
-      // Add local stream with specific constraints for mobile
-      const constraints = {
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000,
-          latency: 0.01
-        },
-        video: false
-      };
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log('Got local media stream with constraints:', constraints);
-        localStreamRef.current = stream;
-        
-        stream.getTracks().forEach(track => {
-          console.log('Adding local track to peer connection:', track.kind, track.getSettings());
-          peerConnection.addTrack(track, stream);
-        });
-      } catch (error) {
-        console.error('Error getting media stream:', error);
-        setError('Failed to access microphone');
-        return;
-      }
-
-      // Handle ICE candidates with better error handling
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.log('Sending ICE candidate:', event.candidate);
-          socket?.emit('ice-candidate', {
-            from: username,
-            to: targetUser,
-            candidate: event.candidate
-          });
-        } else {
-          console.log('ICE candidate gathering completed');
-        }
-      };
-
-      // Handle connection state changes with retry logic
-      let connectionRetryCount = 0;
-      const maxRetries = 3;
-
-      peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state changed:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'failed' || 
-            peerConnection.connectionState === 'disconnected') {
-          if (connectionRetryCount < maxRetries) {
-            console.log(`Retrying connection (attempt ${connectionRetryCount + 1}/${maxRetries})`);
-            connectionRetryCount++;
-            // Try to restart ICE
-            peerConnection.restartIce();
-          } else {
-            console.error('Connection state error:', peerConnection.connectionState);
-            setError(`Call connection ${peerConnection.connectionState}`);
-            endCall();
-          }
-        } else if (peerConnection.connectionState === 'connected') {
-          console.log('Connection established successfully');
-          connectionRetryCount = 0;
-        }
-      };
-
-      // Handle ICE connection state changes with retry logic
-      let iceRetryCount = 0;
-      const maxIceRetries = 3;
-
-      peerConnection.oniceconnectionstatechange = () => {
-        console.log('ICE connection state:', peerConnection.iceConnectionState);
-        if (peerConnection.iceConnectionState === 'failed' || 
-            peerConnection.iceConnectionState === 'disconnected') {
-          if (iceRetryCount < maxIceRetries) {
-            console.log(`Retrying ICE connection (attempt ${iceRetryCount + 1}/${maxIceRetries})`);
-            iceRetryCount++;
-            // Try to restart ICE
-            peerConnection.restartIce();
-          } else {
-            console.error('ICE connection state error:', peerConnection.iceConnectionState);
-            setError(`ICE connection ${peerConnection.iceConnectionState}`);
-            endCall();
-          }
-        } else if (peerConnection.iceConnectionState === 'connected') {
-          console.log('ICE connection established successfully');
-          iceRetryCount = 0;
-        }
-      };
-
-      // Handle ICE gathering state changes
-      peerConnection.onicegatheringstatechange = () => {
-        console.log('ICE gathering state:', peerConnection.iceGatheringState);
-        if (peerConnection.iceGatheringState === 'complete') {
-          console.log('ICE gathering completed');
-        }
-      };
-
-      // Handle signaling state changes
-      peerConnection.onsignalingstatechange = () => {
-        console.log('Signaling state:', peerConnection.signalingState);
-      };
-
-      // Handle incoming tracks with better error handling
-      peerConnection.ontrack = (event) => {
-        console.log('Received remote track:', event.track.kind);
-        const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
-        if (audioElement && event.streams[0]) {
-          console.log('Setting remote audio stream:', event.streams[0]);
-          audioElement.srcObject = event.streams[0];
-          audioElement.autoplay = true;
-          audioElement.muted = false;
-          
-          // Add error handling for audio playback
-          audioElement.onerror = (error) => {
-            console.error('Audio element error:', error);
-            setError('Failed to play audio');
-          };
-
-          audioElement.play().catch(error => {
-            console.error('Error playing audio:', error);
-            setError('Failed to play audio');
-          });
-        }
-      };
-
-      // Create and send offer with specific constraints
-      const offer = await peerConnection.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false,
-        iceRestart: true
-      });
-      await peerConnection.setLocalDescription(offer);
-
-      console.log('Sending call offer to:', targetUser);
+      // Generate a unique room name
+      const newRoomName = `${username}-${targetUser}-${Date.now()}`;
+      setRoomName(newRoomName);
+      
+      // Notify the target user
       socket?.emit('call-user', {
         from: username,
         to: targetUser,
-        signal: offer
+        roomName: newRoomName
       });
 
       setRemoteUser(targetUser);
       setIsCallActive(true);
-      setIsMuted(false); // Reset mute state when starting a new call
+      setIsMuted(false);
     } catch (error) {
       console.error('Error starting call:', error);
       setError('Failed to start call');
@@ -383,191 +77,33 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   };
 
   const endCall = () => {
-    console.log('Ending call');
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
-    }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-    }
     if (remoteUser) {
       socket?.emit('end-call', { to: remoteUser });
     }
     setIsCallActive(false);
     setRemoteUser(null);
-    localStreamRef.current = null;
-    peerConnectionRef.current = null;
+    setRoomName(null);
+    setIncomingCall(null);
   };
 
-  const toggleMute = () => {
-    if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach(track => {
-        track.enabled = !track.enabled;
-      });
-      setIsMuted(!isMuted);
-    }
-  };
-
-  const acceptCall = async () => {
+  const acceptCall = () => {
     if (!incomingCall) return;
     
-    try {
-      // Add local stream with specific constraints for mobile
-      const constraints = {
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000
-        },
-        video: false
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Got local media stream for incoming call');
-      localStreamRef.current = stream;
-      
-      const peerConnection = new RTCPeerConnection({
-        iceServers: [
-          {
-            urls: [
-              'stun:stun.l.google.com:19302',
-              'stun:stun1.l.google.com:19302',
-              'stun:stun2.l.google.com:19302',
-              'stun:stun3.l.google.com:19302',
-              'stun:stun4.l.google.com:19302'
-            ]
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          }
-        ],
-        iceCandidatePoolSize: 10,
-        bundlePolicy: 'max-bundle',
-        rtcpMuxPolicy: 'require',
-        iceTransportPolicy: 'relay'
-      });
-      peerConnectionRef.current = peerConnection;
-
-      // Add local stream
-      stream.getTracks().forEach(track => {
-        console.log('Adding local track to peer connection:', track.kind, track.getSettings());
-        peerConnection.addTrack(track, stream);
-      });
-
-      // Handle ICE candidates
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          console.log('Sending ICE candidate for incoming call');
-          socket?.emit('ice-candidate', {
-            from: username,
-            to: incomingCall.from,
-            candidate: event.candidate
-          });
-        }
-      };
-
-      // Handle connection state changes
-      peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state changed:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'failed' || 
-            peerConnection.connectionState === 'disconnected') {
-          setError(`Call connection ${peerConnection.connectionState}`);
-          endCall();
-        }
-      };
-
-      // Handle ICE connection state changes
-      peerConnection.oniceconnectionstatechange = () => {
-        console.log('ICE connection state:', peerConnection.iceConnectionState);
-        if (peerConnection.iceConnectionState === 'failed' || 
-            peerConnection.iceConnectionState === 'disconnected') {
-          setError(`ICE connection ${peerConnection.iceConnectionState}`);
-          endCall();
-        }
-      };
-
-      // Handle ICE gathering state changes
-      peerConnection.onicegatheringstatechange = () => {
-        console.log('ICE gathering state:', peerConnection.iceGatheringState);
-      };
-
-      // Handle signaling state changes
-      peerConnection.onsignalingstatechange = () => {
-        console.log('Signaling state:', peerConnection.signalingState);
-      };
-
-      // Handle incoming tracks
-      peerConnection.ontrack = (event) => {
-        console.log('Received remote track:', event.track.kind);
-        const audioElement = document.getElementById('remoteAudio') as HTMLAudioElement;
-        if (audioElement && event.streams[0]) {
-          console.log('Setting remote audio stream:', event.streams[0]);
-          audioElement.srcObject = event.streams[0];
-          audioElement.autoplay = true;
-          audioElement.muted = false; // Ensure audio is not muted
-          audioElement.play().catch(error => {
-            console.error('Error playing audio:', error);
-            setError('Failed to play audio');
-          });
-        }
-      };
-
-      // Set remote description and create answer
-      console.log('Setting remote description for incoming call');
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
-      console.log('Creating answer for incoming call');
-      const answer = await peerConnection.createAnswer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false
-      });
-      console.log('Setting local description for incoming call');
-      await peerConnection.setLocalDescription(answer);
-
-      console.log('Sending call answer to:', incomingCall.from);
-      socket?.emit('call-answer', {
-        from: username,
-        to: incomingCall.from,
-        signal: answer
-      });
-
-      setRemoteUser(incomingCall.from);
-      setIsCallActive(true);
-      setIsMuted(false); // Reset mute state when accepting a call
-      setIncomingCall(null);
-    } catch (error) {
-      console.error('Error handling incoming call:', error);
-      setError('Failed to handle incoming call');
-      socket?.emit('call-failed', { 
-        to: incomingCall.from, 
-        message: 'Failed to handle incoming call' 
-      });
-      setIncomingCall(null);
-    }
+    setRoomName(incomingCall.roomName);
+    setRemoteUser(incomingCall.from);
+    setIsCallActive(true);
+    setIsMuted(false);
+    setIncomingCall(null);
   };
 
   const rejectCall = () => {
     if (!incomingCall) return;
-    console.log('Rejecting call from:', incomingCall.from);
     socket?.emit('call-failed', { 
       to: incomingCall.from, 
       message: 'Call rejected by user' 
     });
     setIncomingCall(null);
-    setError(null); // Clear any existing errors
+    setError(null);
   };
 
   return (
@@ -595,12 +131,55 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       )}
 
       {/* Active Call UI */}
-      {isCallActive && (
+      {isCallActive && roomName && (
         <div className="bg-white rounded-lg shadow-lg p-4">
           <div className="text-lg font-semibold mb-2">Call with {remoteUser}</div>
-          <div className="flex space-x-2">
+          <div className="w-[400px] h-[300px]">
+            <JitsiMeeting
+              domain="meet.jit.si"
+              roomName={roomName}
+              configOverwrite={{
+                startWithAudioMuted: isMuted,
+                disableDeepLinking: true,
+                prejoinPageEnabled: false
+              }}
+              interfaceConfigOverwrite={{
+                TOOLBAR_BUTTONS: [
+                  'microphone',
+                  'camera',
+                  'closedcaptions',
+                  'desktop',
+                  'fullscreen',
+                  'fodeviceselection',
+                  'hangup',
+                  'profile',
+                  'chat',
+                  'recording',
+                  'shortcuts',
+                  'tileview',
+                  'select-background',
+                  'download',
+                  'help',
+                  'mute-everyone',
+                  'security'
+                ],
+                SHOW_JITSI_WATERMARK: false,
+                SHOW_WATERMARK_FOR_GUESTS: false,
+                DEFAULT_REMOTE_DISPLAY_NAME: remoteUser || 'Remote User',
+                DEFAULT_LOCAL_DISPLAY_NAME: username
+              }}
+              userInfo={{
+                displayName: username
+              }}
+              getIFrameRef={(iframeRef: HTMLIFrameElement) => {
+                iframeRef.style.height = '100%';
+                iframeRef.style.width = '100%';
+              }}
+            />
+          </div>
+          <div className="flex space-x-2 mt-2">
             <button
-              onClick={toggleMute}
+              onClick={() => setIsMuted(!isMuted)}
               className={`px-4 py-2 rounded ${
                 isMuted ? 'bg-red-500' : 'bg-blue-500'
               } text-white hover:opacity-90`}
@@ -614,7 +193,6 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
               End Call
             </button>
           </div>
-          <audio id="remoteAudio" autoPlay />
         </div>
       )}
 
