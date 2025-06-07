@@ -59,6 +59,7 @@ io.on('connection', (socket) => {
     console.log('Call attempt:', {
       from: data.from,
       to: data.to,
+      roomName: data.roomName,
       signal: data.signal ? 'signal present' : 'no signal'
     });
     console.log('Current connected users:', Object.fromEntries(connectedUsers));
@@ -70,7 +71,7 @@ io.on('connection', (socket) => {
       console.log(`Sending call to ${data.to} (socket: ${targetSocketId})`);
       io.to(targetSocketId).emit('incoming-call', {
         from: data.from,
-        signal: data.signal
+        roomName: data.roomName
       });
 
       // Clear any existing timeouts for this call pair
