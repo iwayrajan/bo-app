@@ -6,6 +6,21 @@ interface AudioCallProps {
   username: string;
 }
 
+interface RouterRtpCapabilitiesResponse {
+  routerRtpCapabilities: mediasoupClient.types.RtpCapabilities;
+}
+
+interface WebRtcTransportResponse {
+  id: string;
+  iceParameters: mediasoupClient.types.IceParameters;
+  iceCandidates: mediasoupClient.types.IceCandidate[];
+  dtlsParameters: mediasoupClient.types.DtlsParameters;
+}
+
+interface ProduceResponse {
+  id: string;
+}
+
 const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const { socket } = useSocket();
   const [isCallActive, setIsCallActive] = useState(false);
@@ -71,6 +86,24 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
 
+      // Get router RTP capabilities
+      const { routerRtpCapabilities } = await new Promise<RouterRtpCapabilitiesResponse>((resolve, reject) => {
+        if (!socket) {
+          reject(new Error('Socket not connected'));
+          return;
+        }
+        socket.emit('getRouterRtpCapabilities', { roomId: newRoomId }, (response: RouterRtpCapabilitiesResponse) => {
+          if ('error' in response) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      // Load device with router RTP capabilities
+      await deviceRef.current.load({ routerRtpCapabilities });
+
       // Get local audio stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -85,9 +118,13 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       audioStreamRef.current = stream;
 
       // Create producer transport
-      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise((resolve, reject) => {
-        socket.emit('createWebRtcTransport', { roomId: newRoomId }, (response) => {
-          if (response.error) {
+      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
+        if (!socket) {
+          reject(new Error('Socket not connected'));
+          return;
+        }
+        socket.emit('createWebRtcTransport', { roomId: newRoomId }, (response: WebRtcTransportResponse) => {
+          if ('error' in response) {
             reject(response.error);
           } else {
             resolve(response);
@@ -104,34 +141,40 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       producerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
         try {
-          await new Promise((resolve, reject) => {
+          if (!socket) {
+            throw new Error('Socket not connected');
+          }
+          await new Promise<void>((resolve, reject) => {
             socket.emit('connectTransport', {
               transportId: producerTransportRef.current?.id,
               dtlsParameters
-            }, (response) => {
+            }, (response: { error?: string }) => {
               if (response.error) {
-                reject(response.error);
+                reject(new Error(response.error));
               } else {
-                resolve(response);
+                resolve();
               }
             });
           });
           callback();
         } catch (error) {
-          errback(error);
+          errback(error instanceof Error ? error : new Error(String(error)));
         }
       });
 
       producerTransportRef.current.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
         try {
-          const { id } = await new Promise((resolve, reject) => {
+          if (!socket) {
+            throw new Error('Socket not connected');
+          }
+          const { id } = await new Promise<ProduceResponse>((resolve, reject) => {
             socket.emit('produce', {
               transportId: producerTransportRef.current?.id,
               kind,
               rtpParameters
-            }, (response) => {
-              if (response.error) {
-                reject(response.error);
+            }, (response: ProduceResponse) => {
+              if ('error' in response) {
+                reject(new Error(response.error as string));
               } else {
                 resolve(response);
               }
@@ -139,12 +182,15 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
           });
           callback({ id });
         } catch (error) {
-          errback(error);
+          errback(error instanceof Error ? error : new Error(String(error)));
         }
       });
 
       // Start producing
       const track = stream.getAudioTracks()[0];
+      if (!track) {
+        throw new Error('No audio track found in stream');
+      }
       producerRef.current = await producerTransportRef.current.produce({ track });
 
       // Notify the target user
@@ -196,6 +242,24 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
 
+      // Get router RTP capabilities
+      const { routerRtpCapabilities } = await new Promise<RouterRtpCapabilitiesResponse>((resolve, reject) => {
+        if (!socket) {
+          reject(new Error('Socket not connected'));
+          return;
+        }
+        socket.emit('getRouterRtpCapabilities', { roomId: incomingCall.roomId }, (response: RouterRtpCapabilitiesResponse) => {
+          if ('error' in response) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      // Load device with router RTP capabilities
+      await deviceRef.current.load({ routerRtpCapabilities });
+
       // Get local audio stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -210,9 +274,13 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       audioStreamRef.current = stream;
 
       // Create producer transport
-      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise((resolve, reject) => {
-        socket.emit('createWebRtcTransport', { roomId: incomingCall.roomId }, (response) => {
-          if (response.error) {
+      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
+        if (!socket) {
+          reject(new Error('Socket not connected'));
+          return;
+        }
+        socket.emit('createWebRtcTransport', { roomId: incomingCall.roomId }, (response: WebRtcTransportResponse) => {
+          if ('error' in response) {
             reject(response.error);
           } else {
             resolve(response);
@@ -229,34 +297,40 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
 
       producerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
         try {
-          await new Promise((resolve, reject) => {
+          if (!socket) {
+            throw new Error('Socket not connected');
+          }
+          await new Promise<void>((resolve, reject) => {
             socket.emit('connectTransport', {
               transportId: producerTransportRef.current?.id,
               dtlsParameters
-            }, (response) => {
+            }, (response: { error?: string }) => {
               if (response.error) {
-                reject(response.error);
+                reject(new Error(response.error));
               } else {
-                resolve(response);
+                resolve();
               }
             });
           });
           callback();
         } catch (error) {
-          errback(error);
+          errback(error instanceof Error ? error : new Error(String(error)));
         }
       });
 
       producerTransportRef.current.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
         try {
-          const { id } = await new Promise((resolve, reject) => {
+          if (!socket) {
+            throw new Error('Socket not connected');
+          }
+          const { id } = await new Promise<ProduceResponse>((resolve, reject) => {
             socket.emit('produce', {
               transportId: producerTransportRef.current?.id,
               kind,
               rtpParameters
-            }, (response) => {
-              if (response.error) {
-                reject(response.error);
+            }, (response: ProduceResponse) => {
+              if ('error' in response) {
+                reject(new Error(response.error as string));
               } else {
                 resolve(response);
               }
@@ -264,12 +338,15 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
           });
           callback({ id });
         } catch (error) {
-          errback(error);
+          errback(error instanceof Error ? error : new Error(String(error)));
         }
       });
 
       // Start producing
       const track = stream.getAudioTracks()[0];
+      if (!track) {
+        throw new Error('No audio track found in stream');
+      }
       producerRef.current = await producerTransportRef.current.produce({ track });
 
       setRoomId(incomingCall.roomId);
