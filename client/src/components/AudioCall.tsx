@@ -34,6 +34,16 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         return;
       }
 
+      // Validate roomName
+      if (!data.roomName) {
+        console.error('Invalid call: missing roomName');
+        socket.emit('call-failed', {
+          to: data.from,
+          message: 'Invalid call: missing room information'
+        });
+        return;
+      }
+
       setIncomingCall({
         from: data.from,
         roomName: data.roomName
