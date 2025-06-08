@@ -102,7 +102,9 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       setRoomId(newRoomId);
       
       // Join the room
-      socket.emit('join-room', newRoomId);
+      if (socket) {
+        socket.emit('join-room', newRoomId);
+      }
 
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
@@ -216,11 +218,13 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       producerRef.current = await producerTransportRef.current.produce({ track });
 
       // Notify the target user
-      socket.emit('call-user', {
-        from: username,
-        to: targetUser,
-        roomId: newRoomId
-      });
+      if (socket) {
+        socket.emit('call-user', {
+          from: username,
+          to: targetUser,
+          roomId: newRoomId
+        });
+      }
 
       setRemoteUser(targetUser);
       setIsCallActive(true);
@@ -263,47 +267,50 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
         throw new Error('Device, socket, or room ID not available');
       }
 
-      // Create consumer transport
-      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
-        socket.emit('createWebRtcTransport', { roomId }, (response: WebRtcTransportResponse) => {
-          if ('error' in response) {
-            reject(response.error);
-          } else {
-            resolve(response);
+      if (!consumerTransportRef.current) {
+        const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
+          socket.emit('createWebRtcTransport', { roomId }, (response: WebRtcTransportResponse) => {
+            if ('error' in response) {
+              reject(response.error);
+            } else {
+              resolve(response);
+            }
+          });
+        });
+
+        consumerTransportRef.current = deviceRef.current.createRecvTransport({
+          id,
+          iceParameters,
+          iceCandidates,
+          dtlsParameters
+        });
+
+        consumerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              if (!socket) throw new Error('Socket is null');
+              socket.emit('connectTransport', {
+                transportId: consumerTransportRef.current?.id,
+                dtlsParameters
+              }, (response: { error?: string }) => {
+                if (response.error) {
+                  reject(new Error(response.error));
+                } else {
+                  resolve();
+                }
+              });
+            });
+            callback();
+          } catch (error) {
+            errback(error instanceof Error ? error : new Error(String(error)));
           }
         });
-      });
-
-      consumerTransportRef.current = deviceRef.current.createRecvTransport({
-        id,
-        iceParameters,
-        iceCandidates,
-        dtlsParameters
-      });
-
-      consumerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            socket.emit('connectTransport', {
-              transportId: consumerTransportRef.current?.id,
-              dtlsParameters
-            }, (response: { error?: string }) => {
-              if (response.error) {
-                reject(new Error(response.error));
-              } else {
-                resolve();
-              }
-            });
-          });
-          callback();
-        } catch (error) {
-          errback(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
+      }
 
       // Consume the remote audio
       const { rtpCapabilities } = deviceRef.current;
       const data = await new Promise<any>((resolve, reject) => {
+        if (!socket) throw new Error('Socket is null');
         socket.emit('consume', {
           transportId: consumerTransportRef.current?.id,
           producerId,
@@ -319,24 +326,27 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       });
 
       const { id: consumerId, kind, rtpParameters } = data;
-      consumerRef.current = await consumerTransportRef.current.consume({
+      const newConsumer = await consumerTransportRef.current.consume({
         id: consumerId,
         producerId,
         kind,
         rtpParameters
       });
 
+      consumerRef.current = newConsumer;
+
       // Play the remote audio
-      const { track } = consumerRef.current;
+      const { track } = newConsumer;
       const remoteStream = new MediaStream([track]);
       if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
-        await remoteAudioRef.current.play();
+        await remoteAudioRef.current.play().catch(e => console.error("Audio play failed:", e));
       }
 
       // Resume the consumer on the server
       await new Promise<void>((resolve, reject) => {
-        socket.emit('resume-consumer', { consumerId: consumerRef.current?.id }, (response: { error?: string }) => {
+        if (!socket) throw new Error('Socket is null');
+        socket.emit('resume-consumer', { consumerId: newConsumer.id }, (response: { error?: string }) => {
           if (response.error) {
             reject(new Error(response.error));
           } else {
@@ -356,7 +366,9 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     
     try {
       // Join the room
-      socket.emit('join-room', incomingCall.roomId);
+      if (socket) {
+        socket.emit('join-room', incomingCall.roomId);
+      }
 
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
@@ -405,6 +417,52 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             resolve(response);
           }
         });
+      });
+
+      // Create consumer transport
+      const { id: consumerTransportId, iceParameters: consumerIceParameters, iceCandidates: consumerIceCandidates, dtlsParameters: consumerDtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
+        if (!socket) {
+          reject(new Error('Socket not connected'));
+          return;
+        }
+        socket.emit('createWebRtcTransport', { roomId: incomingCall.roomId }, (response: WebRtcTransportResponse) => {
+          if ('error' in response) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      consumerTransportRef.current = deviceRef.current.createRecvTransport({
+        id: consumerTransportId,
+        iceParameters: consumerIceParameters,
+        iceCandidates: consumerIceCandidates,
+        dtlsParameters: consumerDtlsParameters
+      });
+
+      consumerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            if (!socket) {
+              reject(new Error('Socket not connected'));
+              return;
+            }
+            socket.emit('connectTransport', {
+              transportId: consumerTransportRef.current?.id,
+              dtlsParameters
+            }, (response: { error?: string }) => {
+              if (response.error) {
+                reject(new Error(response.error));
+              } else {
+                resolve();
+              }
+            });
+          });
+          callback();
+        } catch (error) {
+          errback(error instanceof Error ? error : new Error(String(error)));
+        }
       });
 
       producerTransportRef.current = deviceRef.current.createSendTransport({
@@ -477,20 +535,24 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     } catch (error) {
       console.error('Error accepting call:', error);
       setError('Failed to accept call');
-      socket?.emit('call-failed', { 
-        to: incomingCall.from, 
-        message: 'Failed to accept call'
-      });
+      if (socket) {
+        socket.emit('call-failed', {
+          to: incomingCall.from,
+          message: 'Failed to accept call'
+        });
+      }
       setIncomingCall(null);
     }
   };
 
   const rejectCall = () => {
     if (!incomingCall) return;
-    socket?.emit('call-failed', { 
-      to: incomingCall.from, 
-      message: 'Call rejected by user' 
-    });
+    if (socket) {
+      socket.emit('call-failed', {
+        to: incomingCall.from,
+        message: 'Call rejected by user'
+      });
+    }
     setIncomingCall(null);
     setError(null);
   };
@@ -527,7 +589,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
           <div className="flex space-x-2">
             <button
               onClick={() => {
-                if (producerRef.current) {
+                if (producerRef.current && producerRef.current.track) {
                   const track = producerRef.current.track;
                   track.enabled = !track.enabled;
                   setIsMuted(!isMuted);
