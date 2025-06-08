@@ -37,6 +37,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const producerRef = useRef<mediasoupClient.types.Producer | null>(null);
   const consumerRef = useRef<mediasoupClient.types.Consumer | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!socket) return;
@@ -68,12 +69,29 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       endCall();
     };
 
+    const handleNewProducer = (data: { producerId: string }) => {
+      console.log('New producer detected:', data.producerId);
+      if (remoteUser) {
+        consumeRemoteAudio(data.producerId);
+      }
+    };
+
+    const handleCallFailed = (data: { message: string }) => {
+      console.error('Call failed:', data.message);
+      setError(data.message);
+      endCall();
+    };
+
     socket.on('incoming-call', handleIncomingCall);
     socket.on('call-ended', handleCallEnded);
+    socket.on('new-producer', handleNewProducer);
+    socket.on('call-failed', handleCallFailed);
 
     return () => {
       socket.off('incoming-call', handleIncomingCall);
       socket.off('call-ended', handleCallEnded);
+      socket.off('new-producer', handleNewProducer);
+      socket.off('call-failed', handleCallFailed);
     };
   }, [socket, username, isCallActive]);
 
@@ -83,6 +101,9 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       const newRoomId = `${username}-${targetUser}-${Date.now()}`;
       setRoomId(newRoomId);
       
+      // Join the room
+      socket.emit('join-room', newRoomId);
+
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
 
@@ -171,7 +192,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             socket.emit('produce', {
               transportId: producerTransportRef.current?.id,
               kind,
-              rtpParameters
+              rtpParameters,
+              roomId: newRoomId
             }, (response: ProduceResponse) => {
               if ('error' in response) {
                 reject(new Error(response.error as string));
@@ -235,10 +257,107 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     setIncomingCall(null);
   };
 
+  const consumeRemoteAudio = async (producerId: string) => {
+    try {
+      if (!deviceRef.current || !socket || !roomId) {
+        throw new Error('Device, socket, or room ID not available');
+      }
+
+      // Create consumer transport
+      const { id, iceParameters, iceCandidates, dtlsParameters } = await new Promise<WebRtcTransportResponse>((resolve, reject) => {
+        socket.emit('createWebRtcTransport', { roomId }, (response: WebRtcTransportResponse) => {
+          if ('error' in response) {
+            reject(response.error);
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      consumerTransportRef.current = deviceRef.current.createRecvTransport({
+        id,
+        iceParameters,
+        iceCandidates,
+        dtlsParameters
+      });
+
+      consumerTransportRef.current.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            socket.emit('connectTransport', {
+              transportId: consumerTransportRef.current?.id,
+              dtlsParameters
+            }, (response: { error?: string }) => {
+              if (response.error) {
+                reject(new Error(response.error));
+              } else {
+                resolve();
+              }
+            });
+          });
+          callback();
+        } catch (error) {
+          errback(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+
+      // Consume the remote audio
+      const { rtpCapabilities } = deviceRef.current;
+      const data = await new Promise<any>((resolve, reject) => {
+        socket.emit('consume', {
+          transportId: consumerTransportRef.current?.id,
+          producerId,
+          rtpCapabilities,
+          roomId
+        }, (response: any) => {
+          if (response.error) {
+            reject(new Error(response.error));
+          } else {
+            resolve(response);
+          }
+        });
+      });
+
+      const { id: consumerId, kind, rtpParameters } = data;
+      consumerRef.current = await consumerTransportRef.current.consume({
+        id: consumerId,
+        producerId,
+        kind,
+        rtpParameters
+      });
+
+      // Play the remote audio
+      const { track } = consumerRef.current;
+      const remoteStream = new MediaStream([track]);
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream;
+        await remoteAudioRef.current.play();
+      }
+
+      // Resume the consumer on the server
+      await new Promise<void>((resolve, reject) => {
+        socket.emit('resume-consumer', { consumerId: consumerRef.current?.id }, (response: { error?: string }) => {
+          if (response.error) {
+            reject(new Error(response.error));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+    } catch (error) {
+      console.error('Error consuming remote audio:', error);
+      setError('Failed to receive remote audio');
+    }
+  };
+
   const acceptCall = async () => {
     if (!incomingCall) return;
     
     try {
+      // Join the room
+      socket.emit('join-room', incomingCall.roomId);
+
       // Initialize mediasoup device
       deviceRef.current = new mediasoupClient.Device();
 
@@ -327,7 +446,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
             socket.emit('produce', {
               transportId: producerTransportRef.current?.id,
               kind,
-              rtpParameters
+              rtpParameters,
+              roomId: incomingCall.roomId
             }, (response: ProduceResponse) => {
               if ('error' in response) {
                 reject(new Error(response.error as string));
@@ -357,8 +477,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     } catch (error) {
       console.error('Error accepting call:', error);
       setError('Failed to accept call');
-      socket?.emit('call-failed', {
-        to: incomingCall.from,
+      socket?.emit('call-failed', { 
+        to: incomingCall.from, 
         message: 'Failed to accept call'
       });
       setIncomingCall(null);
@@ -403,6 +523,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       {isCallActive && (
         <div className="bg-white rounded-lg shadow-lg p-4">
           <div className="text-lg font-semibold mb-2">Call with {remoteUser}</div>
+          <audio ref={remoteAudioRef} autoPlay playsInline />
           <div className="flex space-x-2">
             <button
               onClick={() => {
