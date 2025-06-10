@@ -13,6 +13,8 @@ services:
         value: https://chatapp-client.onrender.com
       - key: PORT
         value: 3000
+      - key: SERVER_IP
+        value: 0.0.0.0
 
   # Frontend service
   - type: web
