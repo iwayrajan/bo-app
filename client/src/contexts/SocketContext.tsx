@@ -18,9 +18,7 @@ export const useSocket = () => {
   return context;
 };
 
-const SOCKET_URL = import.meta.env.PROD 
-  ? import.meta.env.VITE_SERVER_URL
-  : 'http://localhost:3000';
+const SOCKET_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3000';
 
 interface SocketProviderProps {
   children: React.ReactNode;

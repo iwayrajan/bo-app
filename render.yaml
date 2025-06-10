@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: CLIENT_URL
-        value: https://chatapp-client.onrender.com
+        value: https://chatapp-client-fg8u.onrender.com
       - key: PORT
         value: 3000
       - key: SERVER_IP
@@ -24,7 +24,7 @@ services:
     staticPublishPath: ./client/dist
     envVars:
       - key: VITE_SERVER_URL
-        value: https://chatapp-server.onrender.com
+        value: https://chatapp-server-oao2.onrender.com
       - key: VITE_FIREBASE_API_KEY
         sync: false
       - key: VITE_FIREBASE_AUTH_DOMAIN
