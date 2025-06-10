@@ -159,9 +159,14 @@ io.on('connection', (socket) => {
       });
 
       transport.observer.on('close', () => {
+        console.log(`Transport closed: ${transport.id}`);
         transport.close();
         transports.delete(transport.id);
         socket.data.transports.delete(transport.id);
+      });
+
+      transport.observer.on('dtlsstatechange', dtlsState => {
+        console.log(`Transport ${transport.id} DTLS state changed to ${dtlsState}`);
       });
 
       transports.set(transport.id, transport);
