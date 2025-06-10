@@ -79,6 +79,8 @@ const callTimeouts = new Map();
 io.on('connection', (socket) => {
   console.log('New client connected:', socket.id);
 
+  socket.data.transports = new Set();
+
   socket.on('set-username', (username) => {
     console.log(`User ${username} (${socket.id}) is setting their username`);
     connectedUsers.set(username, socket.id);
@@ -117,6 +119,13 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('call-accepted', ({ to, roomId }) => {
+    const toSocketId = connectedUsers.get(to);
+    if (toSocketId) {
+      io.to(toSocketId).emit('call-accepted', { roomId });
+    }
+  });
+
   socket.on('end-call', ({ to }) => {
     const toSocketId = connectedUsers.get(to);
     if (toSocketId) {
@@ -141,7 +150,7 @@ io.on('connection', (socket) => {
             ip: '0.0.0.0',
             announcedIp: process.env.NODE_ENV === 'production'
               ? process.env.SERVER_IP
-              : '127.0.0.1'
+              : undefined
           }
         ],
         enableUdp: true,
@@ -152,9 +161,11 @@ io.on('connection', (socket) => {
       transport.observer.on('close', () => {
         transport.close();
         transports.delete(transport.id);
+        socket.data.transports.delete(transport.id);
       });
 
       transports.set(transport.id, transport);
+      socket.data.transports.add(transport.id);
 
       callback({
         id: transport.id,
@@ -197,6 +208,7 @@ io.on('connection', (socket) => {
 
       producer.observer.on('close', () => {
         producers.delete(producer.id);
+        io.to(roomId).emit('producer-closed', { producerId: producer.id });
       });
 
       // Notify other clients in the room
@@ -287,6 +299,17 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+
+    // Close mediasoup transports associated with this socket
+    if (socket.data.transports) {
+      socket.data.transports.forEach(transportId => {
+        const transport = transports.get(transportId);
+        if (transport) {
+          transport.close();
+        }
+      });
+    }
+
     // Find and remove the disconnected user
     let disconnectedUser = null;
     for (const [username, id] of connectedUsers.entries()) {
