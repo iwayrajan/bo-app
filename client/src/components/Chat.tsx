@@ -242,7 +242,7 @@ const Chat: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
+    <div className="flex flex-col h-[90vh] bg-gray-100">
       {/* Connection Status */}
       <div className={`p-2 text-center text-sm ${socket ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
         {socket ? 'Connected' : 'Disconnected'}
