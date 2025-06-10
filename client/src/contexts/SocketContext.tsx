@@ -54,7 +54,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     
     // Create socket connection
     const newSocket = io(SOCKET_URL, {
-      transports: ['websocket'],
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,

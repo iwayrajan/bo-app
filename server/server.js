@@ -9,14 +9,9 @@ app.set('trust proxy', 1); // Trust the Render proxy
 const server = http.createServer(app);
 
 // CORS configuration
-const prodClientUrls = [
-  process.env.CLIENT_URL,
-  'https://chatapp-client-fg8u.onrender.com' // from user feedback
-].filter(Boolean);
-
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production'
-    ? prodClientUrls
+    ? /https:\/\/.*\.onrender\.com/
     : 'http://localhost:5173',
   methods: ['GET', 'POST'],
   credentials: true
@@ -28,7 +23,7 @@ app.use(express.json());
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production'
-      ? prodClientUrls
+      ? /https:\/\/.*\.onrender\.com/
       : 'http://localhost:5173',
     methods: ['GET', 'POST'],
     credentials: true
@@ -36,7 +31,7 @@ const io = new Server(server, {
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
   pingInterval: 25000,
-  allowEIO3: true
+  behindProxy: true
 });
 
 // Mediasoup workers
