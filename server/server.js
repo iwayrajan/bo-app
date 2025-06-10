@@ -150,7 +150,7 @@ io.on('connection', (socket) => {
             ip: '0.0.0.0',
             announcedIp: process.env.NODE_ENV === 'production'
               ? process.env.SERVER_IP
-              : undefined
+              : '127.0.0.1'
           }
         ],
         enableUdp: true,

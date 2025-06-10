@@ -21,6 +21,23 @@ interface ProduceResponse {
   id: string;
 }
 
+// A dedicated component to handle playing a single audio stream.
+const AudioPlayer: React.FC<{ stream: MediaStream }> = ({ stream }) => {
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    if (audioRef.current && stream) {
+      audioRef.current.srcObject = stream;
+      audioRef.current.play().catch(error => {
+        console.error("Error attempting to play audio:", error);
+        // This error often indicates an autoplay policy restriction.
+      });
+    }
+  }, [stream]);
+
+  return <audio ref={audioRef} autoPlay playsInline />;
+};
+
 const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const { socket } = useSocket();
   const [isCallActive, setIsCallActive] = useState(false);
@@ -29,6 +46,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const [error, setError] = useState<string | null>(null);
   const [incomingCall, setIncomingCall] = useState<{ from: string; roomId: string } | null>(null);
   const roomIdRef = useRef<string | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<MediaStream[]>([]);
 
   // Mediasoup refs
   const deviceRef = useRef<mediasoupClient.Device | null>(null);
@@ -37,7 +55,6 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const producerRef = useRef<mediasoupClient.types.Producer | null>(null);
   const consumersRef = useRef<Map<string, mediasoupClient.types.Consumer>>(new Map());
   const audioStreamRef = useRef<MediaStream | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!socket) return;
@@ -69,6 +86,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       console.log('Producer closed:', producerId);
       const consumer = consumersRef.current.get(producerId);
       if (consumer) {
+        const closedTrack = consumer.track;
+        setRemoteStreams(prevStreams =>
+          prevStreams.filter(stream => stream.getTracks()[0].id !== closedTrack.id)
+        );
         consumer.close();
         consumersRef.current.delete(producerId);
       }
@@ -230,9 +251,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     audioStreamRef.current?.getTracks().forEach(track => track.stop());
     audioStreamRef.current = null;
 
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = null;
-    }
+    setRemoteStreams([]);
   };
 
   const consumeRemoteAudio = async (producerId: string) => {
@@ -257,13 +276,8 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       const consumer = await consumerTransportRef.current.consume({ id, producerId, kind, rtpParameters });
       consumersRef.current.set(producerId, consumer);
 
-      const stream = new MediaStream();
-      stream.addTrack(consumer.track);
-
-      if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = stream;
-        await remoteAudioRef.current.play().catch(e => console.error("Audio play failed:", e));
-      }
+      const stream = new MediaStream([consumer.track]);
+      setRemoteStreams(prevStreams => [...prevStreams, stream]);
 
       socket.emit('resume-consumer', { consumerId: consumer.id }, (response: { error?: string }) => {
         if (response.error) console.error('Failed to resume consumer:', response.error);
@@ -349,7 +363,10 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       {isCallActive && (
         <div className="bg-white rounded-lg shadow-lg p-4">
           <div className="text-lg font-semibold mb-2">Call with {remoteUser}</div>
-          <audio ref={remoteAudioRef} autoPlay playsInline />
+          {/* Remote audio streams will be played here */}
+          {remoteStreams.map(stream => (
+            <AudioPlayer key={stream.id} stream={stream} />
+          ))}
           <div className="flex space-x-2">
             <button
               onClick={() => {
