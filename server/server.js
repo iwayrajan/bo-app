@@ -5,12 +5,18 @@ const cors = require('cors');
 const mediasoup = require('mediasoup');
 
 const app = express();
+app.set('trust proxy', 1); // Trust the Render proxy
 const server = http.createServer(app);
 
 // CORS configuration
+const prodClientUrls = [
+  process.env.CLIENT_URL,
+  'https://chatapp-client-fg8u.onrender.com' // from user feedback
+].filter(Boolean);
+
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://chatapp-client-fg8u.onrender.com', 'http://localhost:5173'] 
+  origin: process.env.NODE_ENV === 'production'
+    ? prodClientUrls
     : 'http://localhost:5173',
   methods: ['GET', 'POST'],
   credentials: true
@@ -22,7 +28,7 @@ app.use(express.json());
 const io = new Server(server, {
   cors: {
     origin: process.env.NODE_ENV === 'production'
-      ? 'https://chatapp-client-fg8u.onrender.com'
+      ? prodClientUrls
       : 'http://localhost:5173',
     methods: ['GET', 'POST'],
     credentials: true
