@@ -150,13 +150,12 @@ io.on('connection', (socket) => {
           {
             ip: '0.0.0.0',
             announcedIp: process.env.NODE_ENV === 'production'
-              ? process.env.SERVER_IP || '0.0.0.0'
+              ? undefined
               : '127.0.0.1'
           }
         ],
-        enableUdp: true,
+        enableUdp: false,
         enableTcp: true,
-        preferUdp: true,
       });
 
       transport.observer.on('close', () => {
