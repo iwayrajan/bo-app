@@ -10,6 +10,7 @@ interface JitsiMeetProps {
 const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
   const jitsiContainerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<any>(null);
+  const wakeLockRef = useRef<any>(null);
 
   useEffect(() => {
     const domain = '8x8.vc';
@@ -33,7 +34,11 @@ const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
           preferH264: true,
           disableH264: false,
           useStunTurn: true
-        }
+        },
+        // Add background audio settings
+        enableBackgroundAudio: true,
+        enableAudioProcessing: true,
+        enableAudioMixer: true
       },
       interfaceConfigOverwrite: {
         SHOW_JITSI_WATERMARK: false,
@@ -54,11 +59,34 @@ const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
 
     apiRef.current = new JitsiMeetExternalAPI(domain, options);
 
+    // Request wake lock to prevent device from sleeping
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.log('Wake Lock request failed:', err);
+      }
+    };
+
     // Handle visibility change
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.hidden) {
         // When app goes to background, ensure audio continues
         apiRef.current?.executeCommand('setAudioMuted', false);
+        
+        // Create a silent audio context to keep audio active
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        gainNode.gain.value = 0; // Set volume to 0
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.start();
+        
+        // Store the audio context in the ref to prevent garbage collection
+        (window as any).__audioContext = audioContext;
       }
     };
 
@@ -85,6 +113,9 @@ const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
     window.addEventListener('popstate', handlePopState);
     window.history.pushState(null, '', window.location.href);
 
+    // Request wake lock when call starts
+    requestWakeLock();
+
     apiRef.current.addEventListener('videoConferenceLeft', () => {
       onMeetingEnd();
       apiRef.current?.dispose();
@@ -95,6 +126,12 @@ const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('popstate', handlePopState);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release();
+      }
+      if ((window as any).__audioContext) {
+        (window as any).__audioContext.close();
+      }
       apiRef.current?.dispose();
     };
   }, [roomName, onMeetingEnd]);
