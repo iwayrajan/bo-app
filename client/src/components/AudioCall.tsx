@@ -12,6 +12,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
   const [remoteUser, setRemoteUser] = useState<string | null>(null);
   const [incomingCall, setIncomingCall] = useState<{ from: string; roomId: string } | null>(null);
   const [roomId, setRoomId] = useState<string | null>(null);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   useEffect(() => {
     if (!socket) return;
@@ -51,6 +52,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     setRoomId(newRoomId);
     setRemoteUser(targetUser);
     setIsCallActive(true);
+    setIsMinimized(false);
   };
 
   const acceptCall = () => {
@@ -58,6 +60,7 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
       setRoomId(incomingCall.roomId);
       setRemoteUser(incomingCall.from);
       setIsCallActive(true);
+      setIsMinimized(false);
       setIncomingCall(null);
     }
   };
@@ -77,12 +80,52 @@ const AudioCall: React.FC<AudioCallProps> = ({ username }) => {
     setRemoteUser(null);
     setRoomId(null);
     setIncomingCall(null);
+    setIsMinimized(false);
+  };
+
+  const toggleMinimize = () => {
+    setIsMinimized(!isMinimized);
   };
 
   return (
     <div className="fixed bottom-4 right-4 z-50">
       {isCallActive && roomId && (
-        <JitsiMeet roomName={roomId} onMeetingEnd={endCall} />
+        <div className={`bg-white rounded-lg shadow-lg ${isMinimized ? 'w-64' : 'w-full'}`}>
+          <div className="flex justify-between items-center p-2 border-b">
+            <div className="text-sm font-medium">
+              Call with {remoteUser}
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={toggleMinimize}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                {isMinimized ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={endCall}
+                className="text-red-500 hover:text-red-700"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm11 1H6v8l4-2 4 2V6z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {!isMinimized && (
+            <div className="h-[calc(100vh-200px)]">
+              <JitsiMeet roomName={roomId} onMeetingEnd={endCall} />
+            </div>
+          )}
+        </div>
       )}
 
       {incomingCall && !isCallActive && (
