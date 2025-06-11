@@ -50,7 +50,6 @@ const JitsiMeet: React.FC<JitsiMeetProps> = ({ roomName, onMeetingEnd }) => {
           'mute-everyone', 'security'
         ],
         SHOW_BRAND_WATERMARK: false,
-        SHOW_WATERMARK_FOR_GUESTS: false,
         DEFAULT_REMOTE_DISPLAY_NAME: 'Participant',
         DEFAULT_LOCAL_DISPLAY_NAME: 'You',
         TOOLBAR_ALWAYS_VISIBLE: true
