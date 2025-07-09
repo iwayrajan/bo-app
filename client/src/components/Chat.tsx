@@ -19,6 +19,7 @@ const Chat: React.FC = () => {
   const processedMessageIds = useRef<Set<string>>(new Set());
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Load initial messages from Firebase
   useEffect(() => {
@@ -179,6 +180,8 @@ const Chat: React.FC = () => {
       // Emit to socket for other users
       socket.emit('send-message', message);
       setNewMessage('');
+      // Restore focus to input
+      if (inputRef.current) inputRef.current.focus();
     } catch (error) {
       console.error('Error sending message:', error);
       setError('Failed to send message');
@@ -366,6 +369,7 @@ const Chat: React.FC = () => {
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type a message..."
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
+            ref={inputRef}
           />
           <button
             type="submit"
