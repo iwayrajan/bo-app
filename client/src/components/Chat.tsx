@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Firestore, deleteDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Firestore, deleteDoc, getDocs, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Message, Reaction } from '../types';
 import AudioCall from './AudioCall';
@@ -18,6 +18,7 @@ const Chat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const processedMessageIds = useRef<Set<string>>(new Set());
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
 
   // Load initial messages from Firebase
   useEffect(() => {
@@ -241,6 +242,37 @@ const Chat: React.FC = () => {
     }
   };
 
+  // Function to toggle selection of a message
+  const toggleSelectMessage = (id: string) => {
+    setSelectedMessages(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // Function to delete selected messages
+  const deleteSelectedMessages = async () => {
+    if (selectedMessages.size === 0) return;
+    if (!window.confirm('Delete selected messages? This cannot be undone.')) return;
+    try {
+      const deletePromises = Array.from(selectedMessages).map(async (id) => {
+        const docRef = collection(db, 'messages');
+        // Firestore doc id is the message id
+        return deleteDoc(doc(db, 'messages', id));
+      });
+      await Promise.all(deletePromises);
+      setSelectedMessages(new Set());
+    } catch (error) {
+      console.error('Error deleting selected messages:', error);
+      setError('Failed to delete selected messages. Please try again.');
+    }
+  };
+
   return (
     <div className="flex flex-col h-[90vh] bg-gray-100">
       {/* Connection Status */}
@@ -264,6 +296,14 @@ const Chat: React.FC = () => {
                   : 'bg-gray-200 text-gray-800'
               }`}
             >
+              {/* Selection Checkbox */}
+              <input
+                type="checkbox"
+                checked={selectedMessages.has(message.id)}
+                onChange={() => toggleSelectMessage(message.id)}
+                className="absolute left-[-2rem] top-1"
+                title="Select message"
+              />
               <div className="text-sm">{message.text}</div>
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
@@ -304,6 +344,18 @@ const Chat: React.FC = () => {
         ))}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Delete Selected Button */}
+      {selectedMessages.size > 0 && (
+        <div className="p-4 bg-white border-t flex justify-end">
+          <button
+            onClick={deleteSelectedMessages}
+            className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+          >
+            Delete Selected ({selectedMessages.size})
+          </button>
+        </div>
+      )}
 
       {/* Message Input */}
       <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">
