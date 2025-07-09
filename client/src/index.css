@@ -27,3 +27,8 @@ body {
     top: 50%;
     transform: translate(0, -50%);
 }
+
+button.replymsg {
+    right: 0;
+    top: -1.25rem;
+}

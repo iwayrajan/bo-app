@@ -315,7 +315,7 @@ const Chat: React.FC = () => {
               />
               {/* Reply Icon */}
               <button
-                className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"
+                className="absolute replymsg text-gray-400 hover:text-blue-600"
                 title="Reply"
                 onClick={() => setReplyTo({ id: message.id, user: message.user, text: message.text })}
                 style={{ zIndex: 11 }}
@@ -328,7 +328,7 @@ const Chat: React.FC = () => {
                   <span className="font-semibold">{message.replyTo.user}:</span> {message.replyTo.text}
                 </div>
               )}
-              <div className="text-sm" style={{ marginLeft: '2rem' }}>{message.text}</div>
+              <div className="text-sm">{message.text}</div>
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
               </div>
