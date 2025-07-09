@@ -299,15 +299,15 @@ const Chat: React.FC = () => {
                   : 'bg-gray-200 text-gray-800'
               }`}
             >
-              {/* Selection Checkbox */}
+              {/* Selection Checkbox - always visible, inside bubble */}
               <input
                 type="checkbox"
                 checked={selectedMessages.has(message.id)}
                 onChange={() => toggleSelectMessage(message.id)}
-                className="absolute left-[-2rem] top-1"
+                className="absolute left-2 top-2 z-10"
                 title="Select message"
               />
-              <div className="text-sm">{message.text}</div>
+              <div className="text-sm" style={{ marginLeft: '2rem' }}>{message.text}</div>
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
               </div>
