@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
 import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
+import { ArrowUturnLeftIcon } from '@heroicons/react/24/solid';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Firestore, deleteDoc, getDocs, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Message, Reaction } from '../types';
@@ -19,6 +20,7 @@ const Chat: React.FC = () => {
   const processedMessageIds = useRef<Set<string>>(new Set());
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+  const [replyTo, setReplyTo] = useState<null | { id: string; user: string; text: string }>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Load initial messages from Firebase
@@ -36,7 +38,8 @@ const Chat: React.FC = () => {
           user: data.user,
           text: data.text,
           timestamp: data.timestamp.toDate().toISOString(),
-          reactions: data.reactions || []
+          reactions: data.reactions || [],
+          replyTo: data.replyTo || undefined
         });
       });
       // Sort messages by timestamp
@@ -164,7 +167,8 @@ const Chat: React.FC = () => {
         user: username,
         text: newMessage,
         timestamp: new Date(),
-        reactions: []
+        reactions: [],
+        replyTo: replyTo ? { id: replyTo.id, user: replyTo.user, text: replyTo.text } : null
       });
 
       // Create message with Firebase ID
@@ -173,13 +177,15 @@ const Chat: React.FC = () => {
         user: username,
         text: newMessage,
         timestamp: new Date().toISOString(),
-        reactions: []
+        reactions: [],
+        replyTo: replyTo ? { id: replyTo.id, user: replyTo.user, text: replyTo.text } : undefined
       };
 
       // Don't update local state here - let Firebase's onSnapshot handle it
       // Emit to socket for other users
       socket.emit('send-message', message);
       setNewMessage('');
+      setReplyTo(null);
       // Restore focus to input
       if (inputRef.current) inputRef.current.focus();
     } catch (error) {
@@ -307,6 +313,21 @@ const Chat: React.FC = () => {
                 className="absolute z-10"
                 title="Select message"
               />
+              {/* Reply Icon */}
+              <button
+                className="absolute right-2 top-2 text-gray-400 hover:text-blue-600"
+                title="Reply"
+                onClick={() => setReplyTo({ id: message.id, user: message.user, text: message.text })}
+                style={{ zIndex: 11 }}
+              >
+                <ArrowUturnLeftIcon className="h-4 w-4" />
+              </button>
+              {/* Quoted message if this is a reply */}
+              {message.replyTo && (
+                <div className="mb-1 px-2 py-1 rounded bg-gray-300 text-gray-800 text-xs border-l-4 border-blue-400">
+                  <span className="font-semibold">{message.replyTo.user}:</span> {message.replyTo.text}
+                </div>
+              )}
               <div className="text-sm" style={{ marginLeft: '2rem' }}>{message.text}</div>
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
@@ -360,6 +381,23 @@ const Chat: React.FC = () => {
         </div>
       )}
 
+      {/* Reply Preview above input */}
+      {replyTo && (
+        <div className="flex items-center bg-blue-100 border-l-4 border-blue-500 px-3 py-2 mb-2">
+          <div className="flex-1">
+            <span className="font-semibold text-blue-700">Replying to {replyTo.user}:</span>
+            <span className="ml-2 text-gray-700">{replyTo.text}</span>
+          </div>
+          <button
+            className="ml-2 text-gray-500 hover:text-red-600"
+            onClick={() => setReplyTo(null)}
+            title="Cancel reply"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Message Input */}
       <form onSubmit={handleSendMessage} className="p-4 bg-white border-t">
         <div className="flex space-x-2">
@@ -367,7 +405,7 @@ const Chat: React.FC = () => {
             type="text"
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            placeholder="Type a message..."
+            placeholder={replyTo ? `Replying to ${replyTo.user}...` : "Type a message..."}
             className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:border-blue-500"
             ref={inputRef}
           />
