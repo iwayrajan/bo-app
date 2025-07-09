@@ -13,3 +13,17 @@ body {
   min-width: 320px;
   min-height: 100vh;
 } 
+
+.sender input {
+    position: absolute;
+    right: -1.25rem;
+    top: 50%;
+    transform: translate(0, -50%);
+}
+
+.receiver input {
+    position: absolute;
+    left: -1.25rem;
+    top: 50%;
+    transform: translate(0, -50%);
+}

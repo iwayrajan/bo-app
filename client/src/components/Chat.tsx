@@ -289,7 +289,7 @@ const Chat: React.FC = () => {
           <div
             key={message.id}
             className={`flex ${
-              message.user === username ? 'justify-end' : 'justify-start'
+              message.user === username ? 'receiver justify-end' : 'sender justify-start'
             }`}
           >
             <div
@@ -304,7 +304,7 @@ const Chat: React.FC = () => {
                 type="checkbox"
                 checked={selectedMessages.has(message.id)}
                 onChange={() => toggleSelectMessage(message.id)}
-                className="absolute left-2 top-2 z-10"
+                className="absolute z-10"
                 title="Select message"
               />
               <div className="text-sm" style={{ marginLeft: '2rem' }}>{message.text}</div>
