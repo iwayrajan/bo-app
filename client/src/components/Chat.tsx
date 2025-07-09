@@ -299,7 +299,7 @@ const Chat: React.FC = () => {
             }`}
           >
             <div
-              className={`max-w-[70%] rounded-lg p-3 relative ${
+              className={`min-w-[15%] max-w-[70%] rounded-lg p-3 relative ${
                 message.user === username
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-200 text-gray-800'
@@ -349,12 +349,12 @@ const Chat: React.FC = () => {
                   ))}
                 </div>
               )}
-              <button
+              {/*<button
                 onClick={() => setShowReactionPicker(message.id)}
                 className="absolute -bottom-2 right-0 text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-sm"
               >
                 😀
-              </button>
+              </button>*/}
               {showReactionPicker === message.id && (
                 <div className="absolute bottom-full right-0 mb-2">
                   <ReactionPicker
