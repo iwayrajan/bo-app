@@ -9,6 +9,22 @@ import { Message, Reaction } from '../types';
 import AudioCall from './AudioCall';
 import { ReactionPicker } from './ReactionPicker';
 
+// Utility to auto-link URLs in text
+function linkify(text: string) {
+  const urlRegex = /(https?:\/\/[\w\-._~:/?#[\]@!$&'()*+,;=%]+)|(www\.[\w\-._~:/?#[\]@!$&'()*+,;=%]+)/gi;
+  return text.split(urlRegex).map((part, i) => {
+    if (!part) return null;
+    if (part.match(urlRegex)) {
+      let href = part;
+      if (!href.startsWith('http')) href = 'http://' + href;
+      return (
+        <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">{part}</a>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 const Chat: React.FC = () => {
   const { currentUser } = useAuth();
   const { socket, username } = useSocket();
@@ -328,7 +344,12 @@ const Chat: React.FC = () => {
                   <span className="font-semibold">{message.replyTo.user}:</span> {message.replyTo.text}
                 </div>
               )}
-              <div className="text-sm">{message.text}</div>
+              <div
+                className="text-sm"
+                style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+              >
+                {linkify(message.text)}
+              </div>
               <div className="text-xs mt-1 opacity-75">
                 {new Date(message.timestamp).toLocaleTimeString()}
               </div>

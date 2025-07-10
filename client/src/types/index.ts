@@ -4,6 +4,11 @@ export interface Message {
   text: string;
   timestamp: string;
   reactions?: Reaction[];
+  replyTo?: {
+    id: string;
+    user: string;
+    text: string;
+  };
 }
 
 export interface Reaction {
